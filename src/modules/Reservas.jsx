@@ -4273,7 +4273,9 @@ export default function Reservas() {
     const emailVal = form.contacto?.trim().includes("@") ? form.contacto.trim() : null;
     // Guard: pasadías sin_embarcacion (After Island, etc.) NUNCA guardan
     // salida_id + hora_llegada + nombre_embarcacion — vienen en su propia lancha.
-    const pasGuard = pasadiaList.find(p => p.tipo.toLowerCase() === (form.tipo || "").toLowerCase());
+    // `pasadias` es el state del componente padre; en ReservaModal/Detalle
+    // llega como prop `pasadiaList` (mismo shape).
+    const pasGuard = pasadias.find(p => p.tipo.toLowerCase() === (form.tipo || "").toLowerCase());
     const forzarSinSalida = pasGuard?.sin_embarcacion === true;
     const row = {
       id:         reservaId,

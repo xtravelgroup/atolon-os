@@ -102,17 +102,65 @@ export async function waSendConfirmacion(reserva, salida) {
     totalCOP,
     reserva.id,
   ], "es");
-  if (!r1?.error) return { template_used: "confirmacion_pasadia_atolon", ...r1 };
+  if (!r1?.error) {
+    await logConfirmToConcierge(reserva, telefono, `Confirmación enviada — ${tipo} · ${fecha} · ${horaSalida} · ${reserva.pax || 1}p`, "confirmacion_pasadia_atolon");
+    return { template_used: "confirmacion_pasadia_atolon", ...r1 };
+  }
 
   // Intento 2 — vip_pass_confirmacion
   const r2 = await sendWhatsApp(telefono, "vip_pass_confirmacion", [
     nombre, fecha, String(reserva.pax || 1), horaSalida, totalCOP, reserva.id,
   ], "es");
-  if (!r2?.error) return { template_used: "vip_pass_confirmacion", ...r2 };
+  if (!r2?.error) {
+    await logConfirmToConcierge(reserva, telefono, `Confirmación VIP enviada — ${fecha} · ${horaSalida} · ${reserva.pax || 1}p`, "vip_pass_confirmacion");
+    return { template_used: "vip_pass_confirmacion", ...r2 };
+  }
 
   // Fallback — confirmacionvip (sin variables, ya aprobada)
   const r3 = await sendWhatsApp(telefono, "confirmacionvip", [], "es_CO");
+  if (!r3?.error) {
+    await logConfirmToConcierge(reserva, telefono, "Confirmación enviada (fallback)", "confirmacionvip");
+  }
   return { template_used: "confirmacionvip", first_attempts: [r1?.error, r2?.error], ...r3 };
+}
+
+/**
+ * Registrar la confirmación saliente en ai_conversations + ai_messages para
+ * que aparezca en el módulo Conversaciones del Concierge. Cuando el cliente
+ * responda al WA, el webhook agregará la respuesta a la misma conversación.
+ * Fire-and-forget: nunca bloquea el flujo principal.
+ */
+async function logConfirmToConcierge(reserva, telefono, resumen, template) {
+  if (!supabase) return;
+  try {
+    const tenantId = "T-ATOLON";
+    const contactId = String(telefono).replace(/\D/g, ""); // sin "+", como Meta manda
+    if (!contactId) return;
+    const convId = `CV-${tenantId}-${contactId}`;
+    await supabase.from("ai_conversations").upsert({
+      id: convId,
+      tenant_id: tenantId,
+      channel_id: "CH-ATOLON-CONFIRM-WA",
+      channel_tipo: "whatsapp",
+      contact_id: contactId,
+      contact_nombre: reserva.nombre || null,
+      estado: "live",
+      ultimo_mensaje: resumen.slice(0, 500),
+      ultimo_mensaje_at: new Date().toISOString(),
+      metadata: { canal_tipo: "confirm", reserva_id: reserva.id || null, template },
+    });
+    const msgId = `MSG-${convId}-conf-${reserva.id || Date.now()}`;
+    await supabase.from("ai_messages").upsert({
+      id: msgId,
+      conversation_id: convId,
+      tenant_id: tenantId,
+      rol: "assistant",
+      contenido: resumen,
+      origen: "system",
+    }, { onConflict: "id", ignoreDuplicates: true });
+  } catch (e) {
+    console.warn("[waSendConfirmacion → concierge log] failed:", e?.message || e);
+  }
 }
 
 /**

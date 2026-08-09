@@ -188,25 +188,34 @@ Deno.serve(async (req: Request) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    // ── Router B2B ──────────────────────────────────────────────────────
-    // Si el mensaje viene al phone_number_id del canal B2B, forward completo
-    // al webhook concierge (loop de Claude con tools B2B) en vez de
-    // procesarlo aquí. Coexistencia sin romper el flow de confirmaciones.
+    // ── Router B2B / Confirm ────────────────────────────────────────────
+    // B2B (canal_tipo='b2b'): forward COMPLETO al concierge (Claude + tools),
+    //   reemplaza el procesamiento local.
+    // Confirm (canal_tipo='confirm', número principal): forward ADICIONAL
+    //   fire-and-forget al concierge para que aparezca en el módulo
+    //   Conversaciones. El flujo local (Tatiana + wa_mensajes) sigue igual.
     const firstPhoneId = body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
     if (firstPhoneId) {
-      const { data: b2bChannel } = await SB.from("ai_channels")
-        .select("id").eq("activo", true)
-        .filter("config->>canal_tipo", "eq", "b2b")
+      const { data: aiChannel } = await SB.from("ai_channels")
+        .select("id, config").eq("activo", true).eq("tipo", "whatsapp")
         .filter("config->>phone_number_id", "eq", firstPhoneId)
         .limit(1).maybeSingle();
-      if (b2bChannel) {
-        // Fire-and-forget al concierge webhook, respondemos 200 igual a Meta
+      const canalTipo = aiChannel?.config?.canal_tipo;
+      if (canalTipo === "b2b") {
         fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/concierge-webhook-whatsapp`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(body),
-        }).catch(e => console.warn("[whatsapp-webhook → concierge] forward error:", e));
+        }).catch(e => console.warn("[whatsapp-webhook → concierge B2B] forward error:", e));
         return jsonResp({ forwarded: "b2b", phone_number_id: firstPhoneId });
+      }
+      if (canalTipo === "confirm") {
+        fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/concierge-webhook-whatsapp`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }).catch(e => console.warn("[whatsapp-webhook → concierge Confirm] forward error:", e));
+        // NO return — continuar con el flujo local Tatiana / wa_mensajes
       }
     }
 

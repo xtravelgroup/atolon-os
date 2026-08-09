@@ -42,6 +42,7 @@ Deno.serve(async (req) => {
     if (!channel) return new Response("no channel");
     const tenant_id = channel.tenant_id;
     const isB2B = channel.config?.canal_tipo === "b2b";
+    const isConfirm = channel.config?.canal_tipo === "confirm";
     const accessToken = channel.config?.access_token;
 
     const contact_id = msg.from;
@@ -138,14 +139,18 @@ Deno.serve(async (req) => {
       }, { onConflict: "telefono_e164" });
     }
 
-    // 3) Upsert conversation (compartido concierge + b2b)
+    // 3) Upsert conversation (compartido concierge + b2b + confirm)
     const convId = `CV-${tenant_id}-${contact_id}`;
     await supa.from("ai_conversations").upsert({
       id: convId, tenant_id, channel_id: channel.id, channel_tipo: "whatsapp",
       contact_id, contact_nombre,
-      estado: "live", ultimo_mensaje: texto.slice(0, 500), ultimo_mensaje_at: new Date().toISOString(),
-      // Metadata B2B para que concierge-turn use el agente B2B y pase aliado_id a las tools
-      metadata: isB2B && aliado ? { canal_tipo: "b2b", aliado_id: aliado.aliado_id, aliado_nombre: aliado.aliado_nombre } : null,
+      estado: isConfirm ? "needs_reply" : "live",
+      ultimo_mensaje: texto.slice(0, 500), ultimo_mensaje_at: new Date().toISOString(),
+      metadata: isB2B && aliado
+        ? { canal_tipo: "b2b", aliado_id: aliado.aliado_id, aliado_nombre: aliado.aliado_nombre }
+        : isConfirm
+        ? { canal_tipo: "confirm" }
+        : null,
     });
 
     // 4) Guardar msg entrante — dedup POR CONTENIDO (no por msg.id)
@@ -163,6 +168,13 @@ Deno.serve(async (req) => {
     if (insErr) {
       console.warn("[webhook] insert err (probable dedup):", insErr.message);
       return new Response("dup");
+    }
+
+    // Canal Confirm: solo se registra el mensaje entrante para que el staff
+    // lo vea en el módulo Conversaciones. NO llamamos a Claude ni respondemos
+    // automáticamente — el staff decide manualmente qué contestar.
+    if (isConfirm) {
+      return new Response("confirm-logged");
     }
 
     // 5) Cargar historial reciente para contexto

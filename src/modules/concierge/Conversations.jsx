@@ -17,6 +17,8 @@ export default function Conversations({ tenantId }) {
     if (filter === "handoff")     q = q.eq("estado", "handoff");
     // Filtro B2B: conversaciones que llegan del canal WA B2B (metadata.canal_tipo='b2b')
     if (filter === "b2b")         q = q.filter("metadata->>canal_tipo", "eq", "b2b");
+    // Filtro Confirm: respuestas al WA principal (post-confirmación de reserva, etc.)
+    if (filter === "confirm")     q = q.filter("metadata->>canal_tipo", "eq", "confirm");
     if (search) q = q.ilike("contact_nombre", `%${search}%`);
     const { data } = await q;
     setRows(data || []);
@@ -46,7 +48,7 @@ export default function Conversations({ tenantId }) {
     <div style={{ padding: 20, display: "flex", flexDirection: "column", height: "calc(100vh - 160px)" }}>
       <HEADER title="💬 Conversaciones" subtitle={`${rows.length} conversaciones`} />
       <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-        {[["all","All"],["needs_reply","Needs reply"],["handoff","Handoff"],["b2b","🏢 B2B"]].map(([k,l]) => (
+        {[["all","All"],["needs_reply","Needs reply"],["handoff","Handoff"],["b2b","🏢 B2B"],["confirm","✅ Confirm"]].map(([k,l]) => (
           <button key={k} onClick={() => setFilter(k)} style={{ ...BTN(filter===k?B.sky:B.navyLight, filter===k?B.navy:"#fff"), fontSize: 11 }}>{l}</button>
         ))}
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Buscar contactos" style={{ ...IS, maxWidth: 280 }} />
@@ -64,6 +66,7 @@ export default function Conversations({ tenantId }) {
                 <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>
                   {r.channel_tipo && TAG(B.sky, r.channel_tipo)}
                   {r.metadata?.canal_tipo === "b2b" && TAG("#a88530", `🏢 ${r.metadata?.aliado_nombre || "B2B"}`)}
+                  {r.metadata?.canal_tipo === "confirm" && TAG("#22c55e", "✅ Confirm")}
                   {r.estado !== "live" && TAG(r.estado === "handoff" ? B.danger : B.warning, r.estado)}
                   {r.fuente === "meta_ad" && TAG("#a78bfa", "Meta ad")}
                 </div>
