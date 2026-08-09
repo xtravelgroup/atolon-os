@@ -36,12 +36,15 @@ Deno.serve(async (req) => {
 
   try {
     switch (action) {
-      case "get_agency_context":    return json(await getAgencyContext(supa, aliado_id));
-      case "check_availability":    return json(await checkAvailability(supa, aliado_id, params));
-      case "create_booking":        return json(await createBooking(supa, aliado_id, params));
-      case "generate_payment_link": return json(await generatePaymentLink(supa, aliado_id, params));
-      case "get_recent_bookings":   return json(await getRecentBookings(supa, aliado_id, params));
-      case "redeem_points":         return json(await redeemPoints(supa, aliado_id, params));
+      case "get_agency_context":         return json(await getAgencyContext(supa, aliado_id));
+      case "check_availability":
+      case "check_availability_b2b":     return json(await checkAvailability(supa, aliado_id, params));
+      case "create_booking":
+      case "create_b2b_booking":         return json(await createBooking(supa, aliado_id, params));
+      case "generate_payment_link":
+      case "generate_payment_link_b2b":  return json(await generatePaymentLink(supa, aliado_id, params));
+      case "get_recent_bookings":        return json(await getRecentBookings(supa, aliado_id, params));
+      case "redeem_points":              return json(await redeemPoints(supa, aliado_id, params));
       default: return json({ error: `unknown_action: ${action}` }, 400);
     }
   } catch (e: any) {
