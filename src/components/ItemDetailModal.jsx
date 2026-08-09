@@ -1,6 +1,6 @@
 import React from "react";
 import { B } from "../brand";
-import MovimientosItem from "./MovimientosItem";
+import KardexItem from "./KardexItem";
 
 // Panel lateral compartido para ver detalle de un item con:
 // - Nombre + categoría + unidad
@@ -57,43 +57,13 @@ export default function ItemDetailModal({ item, locaciones = [], stockMap, onClo
           </button>
         </div>
 
-        {/* Stock por locación (solo si se pasaron los datos) */}
-        {stockMap && locaciones.length > 0 && (
-          <div style={{ marginBottom: 20 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: B.sand, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
-              Stock por locación
-            </div>
-            {stockPorLoc.length === 0 ? (
-              <div style={{ padding: 16, textAlign: "center", background: B.navy, borderRadius: 8, color: "rgba(255,255,255,0.4)", fontSize: 12 }}>
-                Sin stock en ninguna locación
-              </div>
-            ) : (
-              <div style={{ background: B.navy, borderRadius: 8, padding: 4 }}>
-                {stockPorLoc.map(x => (
-                  <div
-                    key={x.loc.id}
-                    style={{ display: "flex", justifyContent: "space-between", padding: "8px 10px", fontSize: 12, borderBottom: `1px solid ${B.navyLight}44` }}
-                  >
-                    <div>{x.loc.icono || "📍"} {x.loc.nombre}</div>
-                    <div style={{ fontWeight: 700, color: x.cantidad < 0 ? "#fca5a5" : "#fff" }}>
-                      {fmt(x.cantidad)} {item.unidad}
-                    </div>
-                  </div>
-                ))}
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 10px", fontSize: 13, fontWeight: 800, color: B.sky }}>
-                  <div>Total</div>
-                  <div>{fmt(total)} {item.unidad}</div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Historial de movimientos (siempre) */}
-        <MovimientosItem
+        {/* Kardex (incluye breakdown por bodega + timeline de movs agrupados) */}
+        <KardexItem
           itemId={item.id}
           unidad={item.unidad}
           stockActual={stockMap ? total : (item.stock_actual ?? 0)}
+          stockPorBodega={stockMap ? stockPorLoc : null}
+          locaciones={locaciones}
         />
       </div>
     </div>
