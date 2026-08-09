@@ -179,50 +179,78 @@ async function checkAvailability(supa: any, aliado_id: string, params: any) {
 }
 
 async function createBooking(supa: any, aliado_id: string, params: any) {
-  const { nombre, telefono, email, fecha, salida_id, tipo, pax, notas } = params;
-  // Para reservas B2B solo el nombre es obligatorio. Tel y email son opcionales
-  // porque el cliente final es del agencia — Atolón no necesita contactarlo directo.
+  const { nombre, telefono, email, fecha, salida_id, tipo, pax, notas,
+          modo_precio, // 'publico' | 'neto' — cómo se factura la reserva
+          forma_pago,  // 'transferencia' | 'link_pago' — cómo se cobra
+        } = params;
   if (!nombre)    throw new Error("nombre_required");
   if (!fecha)     throw new Error("fecha_required");
   if (!salida_id) throw new Error("salida_id_required");
   if (!tipo)      throw new Error("tipo_required");
   if (!pax)       throw new Error("pax_required");
+  if (!modo_precio) throw new Error("modo_precio_required (pregunta al aliado: publico o neto)");
+  if (!forma_pago)  throw new Error("forma_pago_required (pregunta al aliado: transferencia o link_pago)");
 
   const { data: al } = await supa.from("aliados_b2b")
     .select("nombre, comision").eq("id", aliado_id).maybeSingle();
   if (!al) throw new Error("aliado_not_found");
 
-  const precioPublico = ({ "VIP Pass": 320000, "Exclusive Pass": 590000, "Atolon Experience": 1100000 } as any)[tipo];
-  if (!precioPublico) throw new Error("tipo_invalido");
-  const comision = Number(al.comision) || 0;
-  const precioNeto = Math.round(precioPublico * (1 - comision / 100));
-  const total = precioNeto * Number(pax);
+  // Buscar pasadía por nombre (case-insensitive, contiene)
+  const tipoNorm = String(tipo || "").toUpperCase().trim();
+  const { data: pases } = await supa.from("pasadias")
+    .select("nombre, precio, precio_neto_agencia")
+    .eq("activo", true).eq("web_publica", true);
+  const pas = (pases || []).find((p: any) => {
+    const n = String(p.nombre).toUpperCase();
+    return n === tipoNorm
+        || n.includes(tipoNorm)
+        || tipoNorm.includes(n)
+        || (tipoNorm.includes("VIP") && n.includes("VIP") && !n.includes("SIN") && !n.includes("DISCOUNT") && !n.includes("BEBIDA"))
+        || (tipoNorm.includes("EXCLUSIVE") && n.includes("EXCLUSIVE") && !n.includes("SIN"))
+        || (tipoNorm.includes("ATOLON") && n.includes("ATOLON") && n.includes("EXPERIENCE"));
+  });
+  if (!pas) throw new Error(`tipo_invalido: no encontre "${tipo}" en pasadias`);
+
+  const publico = Number(pas.precio) || 0;
+  const neto = Number(pas.precio_neto_agencia) || Math.round(publico * (1 - (Number(al.comision) || 0) / 100));
+  const modoNorm = String(modo_precio).toLowerCase();
+  const precioU = modoNorm === "neto" ? neto : publico;
+  const total = precioU * Number(pax);
+
+  const formaNorm = String(forma_pago).toLowerCase();
+  const esLink = formaNorm.includes("link") || formaNorm.includes("wompi");
+  const estado = esLink ? "pendiente_pago" : "pendiente";
 
   const reservaId = `WEB-${Date.now()}`;
   const { error } = await supa.from("reservas").insert({
     id: reservaId,
-    fecha, salida_id, tipo, canal: "B2B",
+    fecha, salida_id, tipo: pas.nombre, canal: "B2B",
     nombre, contacto: email || telefono || "", email: email || null, telefono: telefono || null,
     pax: Number(pax), pax_a: Number(pax), pax_n: 0,
-    precio_u: precioNeto, precio_neto: precioNeto, precio_publico: precioPublico,
+    precio_u: precioU, precio_neto: neto, precio_publico: publico,
     total, abono: 0, saldo: total,
-    estado: "pendiente_pago",
-    forma_pago: "link_pago",
+    estado,
+    forma_pago: esLink ? "link_pago" : "Transferencia",
     aliado_id, vendedor: null,
-    notas: `[BOT WA B2B] ${notas || ""} — Comisión: ${comision}%`,
-    link_expira_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    notas: `[BOT WA B2B] ${notas || ""} — Modo precio: ${modoNorm} — Forma pago: ${esLink ? "link_pago" : "Transferencia"}`.trim(),
+    link_expira_at: esLink ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() : null,
     idioma: "es",
   });
   if (error) throw new Error(`insert_reserva: ${error.message}`);
 
-  // Sumar contador en sesión B2B (si existe)
-  await supa.rpc("noop_ok").catch(() => {}); // ignore if rpc noop no existe
-  await supa.from("b2b_wa_sesiones")
-    .update({ reservas_creadas: 1 })
-    .eq("aliado_id", aliado_id)
-    .catch(() => {});
-
-  return { ok: true, reserva_id: reservaId, precio_neto: precioNeto, total, aliado: al.nombre };
+  return {
+    ok: true,
+    reserva_id: reservaId,
+    tipo: pas.nombre,
+    modo_precio: modoNorm,
+    forma_pago: esLink ? "link_pago" : "Transferencia",
+    precio_unitario: precioU,
+    total,
+    aliado: al.nombre,
+    proximo_paso: esLink
+      ? "Usa generate_payment_link_b2b para obtener el URL Wompi para enviar al cliente."
+      : "Reserva creada. Se enviará info por transferencia al aliado.",
+  };
 }
 
 async function generatePaymentLink(supa: any, aliado_id: string, params: any) {

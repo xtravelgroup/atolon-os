@@ -95,29 +95,22 @@ Deno.serve(async (req) => {
       metadata: isB2B && aliado ? { canal_tipo: "b2b", aliado_id: aliado.aliado_id, aliado_nombre: aliado.aliado_nombre } : null,
     });
 
-    // 4) Guardar msg entrante + dedup
-    // Doble dedup: por msg.id (Meta idempotencia) Y por contenido reciente
-    // (algunas veces Meta envía mismo texto con distintos msg.id — el segundo
-    // rompe el contexto porque Claude ve el texto duplicado).
-    const msgId = `MSG-${msg.id}`;
-    const { data: yaExiste } = await supa.from("ai_messages")
-      .select("id, contenido, created_at")
-      .eq("conversation_id", convId)
-      .eq("rol", "user")
-      .gte("created_at", new Date(Date.now() - 30 * 1000).toISOString())
-      .order("created_at", { ascending: false })
-      .limit(3);
-    const duplicado = (yaExiste || []).some((m: any) =>
-      String(m.contenido).trim() === texto.trim() && m.id !== msgId
-    );
-    if (duplicado) {
-      console.log("[webhook] Mensaje duplicado detectado, saltando:", texto.slice(0, 50));
-      return new Response("dup");
-    }
-    await supa.from("ai_messages").upsert({
+    // 4) Guardar msg entrante — dedup POR CONTENIDO (no por msg.id)
+    // Meta a veces envía el mismo texto con distintos msg.id en <15s. Si
+    // usamos msg.id como PK el upsert crea dos filas. Usando un ID
+    // determinístico basado en (conv + texto + bucket 15s) forzamos que
+    // ambas requests colisionen en el mismo id → upsert dedup natural.
+    const bucket = Math.floor(Date.now() / 15000);
+    const textoSlug = texto.trim().slice(0, 60).replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+    const msgId = `MSG-${convId}-${bucket}-${textoSlug}`;
+    const { error: insErr } = await supa.from("ai_messages").upsert({
       id: msgId, conversation_id: convId, tenant_id, rol: "user",
       contenido: texto, origen: "user", provider_msg_id: msg.id,
-    }, { onConflict: "id" });
+    }, { onConflict: "id", ignoreDuplicates: true });
+    if (insErr) {
+      console.warn("[webhook] insert err (probable dedup):", insErr.message);
+      return new Response("dup");
+    }
 
     // 5) Cargar historial reciente para contexto
     const { data: hist } = await supa.from("ai_messages").select("rol, contenido")
