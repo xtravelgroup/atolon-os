@@ -105,7 +105,7 @@ async function checkAvailability(supa: any, aliado_id: string, params: any) {
       .in("estado", ["confirmado", "pendiente", "pendiente_pago", "check_in"]),
     supa.from("cierres_fecha").select("tipo, salida_id").eq("fecha", fecha),
     supa.from("aliados_b2b").select("comision").eq("id", aliado_id).maybeSingle(),
-    supa.from("salidas").select("id, hora, capacidad_total, activo, auto_apertura, auto_umbral, orden").eq("activo", true).order("orden"),
+    supa.from("salidas").select("id, hora, hora_regreso, capacidad_total, activo, auto_apertura, auto_umbral, orden").eq("activo", true).order("orden"),
   ]);
 
   const cierreTotal = (cierres || []).some((c: any) => c.tipo === "total");
@@ -130,11 +130,20 @@ async function checkAvailability(supa: any, aliado_id: string, params: any) {
   });
 
   // Formato de salidas: SOLO indicamos si caben las N personas, no exponemos cupos
+  const fmtHora = (h: string) => {
+    if (!h) return "";
+    const [hh, mm] = h.split(":");
+    const hi = parseInt(hh, 10);
+    const suf = hi >= 12 ? "PM" : "AM";
+    const h12 = hi === 0 ? 12 : hi > 12 ? hi - 12 : hi;
+    return `${h12}:${mm} ${suf}`;
+  };
   const salidas_abiertas = salidasVisibles.map((s: any) => {
     const disponibles = Math.max(0, s.capacidad_total - (paxPorSalida[s.id] || 0));
     return {
       id: s.id,
-      hora: s.hora,
+      hora_salida: fmtHora(s.hora),
+      hora_regreso: fmtHora(s.hora_regreso),
       caben_las_personas: disponibles >= paxNum,
     };
   }).filter((s: any) => s.caben_las_personas);
@@ -153,7 +162,7 @@ async function checkAvailability(supa: any, aliado_id: string, params: any) {
     salidas_abiertas,
     pases,
     comision_pct: comision,
-    nota: "Solo muestra al agencia si caben las personas y a qué horas. NO mencionar cupos exactos ni disponibilidad numérica.",
+    nota: "USA EXACTAMENTE los valores hora_salida y hora_regreso de cada salida. NO inventes horarios. NO menciones cupos numéricos.",
   };
 }
 
