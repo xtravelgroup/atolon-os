@@ -422,7 +422,7 @@ const TrackExterno = lazy(() => import("./modules/TrackExterno"));
 const MODULE_MAP = {
   pasadias: <Pasadias />,
   reservas: <Reservas />,
-  conversaciones_ai: <AtolonConcierge initialTab="convos" />,
+  conversaciones_ai: <AtolonConcierge initialTab="convos" standalone />,
   floorplan: <FloorPlan />,
   comercial: <Comercial />,
   b2b: <B2B />,

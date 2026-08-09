@@ -40,7 +40,7 @@ const NAV = [
   ]},
 ];
 
-export default function AtolonConcierge({ initialTab = "home" } = {}) {
+export default function AtolonConcierge({ initialTab = "home", standalone = false } = {}) {
   const { isMobile } = useMobile();
   const [tenants, setTenants] = useState([]);
   const [tenantId, setTenantId] = useState(localStorage.getItem("concierge_tenant") || "T-ATOLON");
@@ -81,6 +81,12 @@ export default function AtolonConcierge({ initialTab = "home" } = {}) {
     tab === "campaigns" ? <AtolonConciergeCampaigns    {...commonProps} /> :
     null
   );
+
+  // Modo standalone (ej. entrada desde el menú Comercial → Conversaciones):
+  // renderizar solo la vista, sin el sidebar interno del Concierge.
+  if (standalone) {
+    return <div style={{ minHeight: "calc(100vh - 120px)" }}>{content}</div>;
+  }
 
   return (
     <div style={{ display: "flex", gap: 0, minHeight: "calc(100vh - 120px)", position: "relative" }}>
