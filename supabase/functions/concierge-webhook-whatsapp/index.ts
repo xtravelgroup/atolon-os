@@ -96,7 +96,24 @@ Deno.serve(async (req) => {
     });
 
     // 4) Guardar msg entrante + dedup
+    // Doble dedup: por msg.id (Meta idempotencia) Y por contenido reciente
+    // (algunas veces Meta envía mismo texto con distintos msg.id — el segundo
+    // rompe el contexto porque Claude ve el texto duplicado).
     const msgId = `MSG-${msg.id}`;
+    const { data: yaExiste } = await supa.from("ai_messages")
+      .select("id, contenido, created_at")
+      .eq("conversation_id", convId)
+      .eq("rol", "user")
+      .gte("created_at", new Date(Date.now() - 30 * 1000).toISOString())
+      .order("created_at", { ascending: false })
+      .limit(3);
+    const duplicado = (yaExiste || []).some((m: any) =>
+      String(m.contenido).trim() === texto.trim() && m.id !== msgId
+    );
+    if (duplicado) {
+      console.log("[webhook] Mensaje duplicado detectado, saltando:", texto.slice(0, 50));
+      return new Response("dup");
+    }
     await supa.from("ai_messages").upsert({
       id: msgId, conversation_id: convId, tenant_id, rol: "user",
       contenido: texto, origen: "user", provider_msg_id: msg.id,
