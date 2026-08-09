@@ -147,7 +147,7 @@ Deno.serve(async (req) => {
     await supa.from("ai_conversations").upsert({
       id: convId, tenant_id, channel_id: channel.id, channel_tipo: "whatsapp",
       contact_id, contact_nombre,
-      estado: isConfirm ? "needs_reply" : "live",
+      estado: "live",
       ultimo_mensaje: texto.slice(0, 500), ultimo_mensaje_at: new Date().toISOString(),
       metadata: isB2B && aliado
         ? { canal_tipo: "b2b", aliado_id: aliado.aliado_id, aliado_nombre: aliado.aliado_nombre }
@@ -173,30 +173,25 @@ Deno.serve(async (req) => {
       return new Response("dup");
     }
 
-    // Canal Confirm: solo se registra el mensaje entrante para que el staff
-    // lo vea en el módulo Conversaciones. NO llamamos a Claude ni respondemos
-    // automáticamente — el staff decide manualmente qué contestar.
-    if (isConfirm) {
-      return new Response("confirm-logged");
-    }
-
     // 5) Cargar historial reciente para contexto
     const { data: hist } = await supa.from("ai_messages").select("rol, contenido")
       .eq("conversation_id", convId).order("created_at").limit(20);
 
-    // 6) Invocar concierge-turn con contexto B2B si aplica
+    // 6) Invocar concierge-turn con el contexto adecuado según canal
     const turnRes = await fetch(`${SUPA_URL}/functions/v1/concierge-turn`, {
       method: "POST",
       headers: { "content-type": "application/json", "Authorization": `Bearer ${SUPA_KEY}` },
       body: JSON.stringify({
         tenant_id, conversation_id: convId, message: texto,
         history: (hist || []).slice(0, -1),
-        // El concierge-turn debe honrar esta pista para elegir el agente correcto
-        // y agregar aliado_id al payload de las tool_use B2B.
         b2b_context: isB2B && aliado ? {
           aliado_id: aliado.aliado_id,
           aliado_nombre: aliado.aliado_nombre,
           contacto_nombre: aliado.contacto_nombre,
+        } : null,
+        confirm_context: isConfirm ? {
+          customer_telefono: contact_id,
+          customer_nombre: contact_nombre,
         } : null,
       }),
     });
@@ -204,11 +199,14 @@ Deno.serve(async (req) => {
     const reply = turn?.reply;
     if (!reply) return new Response("no reply");
 
-    // 7) Enviar respuesta por WA Cloud API
-    if (accessToken) {
+    // 7) Enviar respuesta por WA Cloud API — usa token del canal, o el del env
+    // (los canales de la misma WABA pueden compartir token; el Confirm no
+    // tiene token propio guardado, cae al env META_WHATSAPP_TOKEN)
+    const sendToken = accessToken || Deno.env.get("META_WHATSAPP_TOKEN") || "";
+    if (sendToken) {
       await fetch(`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`, {
         method: "POST",
-        headers: { "Authorization": `Bearer ${accessToken}`, "content-type": "application/json" },
+        headers: { "Authorization": `Bearer ${sendToken}`, "content-type": "application/json" },
         body: JSON.stringify({
           messaging_product: "whatsapp", to: contact_id,
           type: "text", text: { body: reply },

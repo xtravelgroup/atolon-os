@@ -28,32 +28,39 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { tenant_id, message, history = [], conversation_id, playground, b2b_context } = body;
+    const { tenant_id, message, history = [], conversation_id, playground, b2b_context, confirm_context } = body;
     if (!tenant_id || !message) {
       return json({ ok: false, error: "tenant_id y message requeridos" }, 400);
     }
     if (!ANTHROPIC_KEY) return json({ ok: false, error: "Falta ANTHROPIC_API_KEY" }, 500);
 
     // 1) Elegir agente + tools según canal
-    // - B2B (viene b2b_context desde el router): usar AGT-ATOLON-B2B + tools con
-    //   nombre que empieza con get_agency/check_availability_b2b/create_b2b/etc.
-    // - Concierge normal: usar el primer agente activo del tenant + tools NO-B2B
+    // - B2B (b2b_context con aliado_id): AGT-ATOLON-B2B + tools B2B
+    // - Confirm (confirm_context con customer_telefono): AGT-ATOLON-MAIN + tools
+    //   públicos + get_customer_reservations
+    // - Concierge normal (web/leads): AGT-ATOLON-MAIN + tools públicos (SIN
+    //   get_customer_reservations, que solo tiene sentido si sabes el tel del
+    //   contacto)
     const isB2B = !!b2b_context?.aliado_id;
+    const isConfirm = !isB2B && !!confirm_context?.customer_telefono;
     const agentQuery = isB2B
       ? supa.from("ai_agents").select("*").eq("id", "AGT-ATOLON-B2B").maybeSingle()
       : supa.from("ai_agents").select("*").eq("tenant_id", tenant_id).eq("activo", true).neq("id", "AGT-ATOLON-B2B").limit(1).maybeSingle();
     const B2B_TOOL_NAMES = ["get_agency_context", "check_availability_b2b", "create_b2b_booking", "generate_payment_link_b2b", "get_recent_bookings", "redeem_points", "update_booking_price_mode", "cancel_booking"];
+    const CUSTOMER_ONLY_TOOL_NAMES = ["get_customer_reservations"];
     const [{ data: agent }, { data: kb }, { data: allTools }] = await Promise.all([
       agentQuery,
       supa.from("ai_knowledge_base").select("*").eq("tenant_id", tenant_id).eq("activo", true).limit(20),
       supa.from("ai_tools").select("*").eq("tenant_id", tenant_id).eq("activo", true),
     ]);
     if (!agent) return json({ ok: false, error: `No hay agente ${isB2B ? "B2B" : "principal"} activo` }, 400);
-    const tools = (allTools || []).filter((t: any) =>
-      isB2B
-        ? B2B_TOOL_NAMES.includes(t.nombre)
-        : !B2B_TOOL_NAMES.includes(t.nombre)
-    );
+    const tools = (allTools || []).filter((t: any) => {
+      if (isB2B) return B2B_TOOL_NAMES.includes(t.nombre);
+      if (B2B_TOOL_NAMES.includes(t.nombre)) return false;
+      // Customer-only tools solo se ofrecen si hay confirm_context (sabemos el tel)
+      if (CUSTOMER_ONLY_TOOL_NAMES.includes(t.nombre)) return isConfirm;
+      return true;
+    });
 
     // 2) Armar system prompt
     const kbContext = (kb || []).map((k: any) => `## ${k.nombre}\n${(k.contenido || k.url || "").slice(0, 2000)}`).join("\n\n---\n\n");
@@ -66,12 +73,24 @@ Deno.serve(async (req) => {
     const tz = agent.idioma_default === "es" ? "America/Bogota" : "UTC";
     const hoy = new Date().toLocaleDateString("es-CO", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: tz });
     const hoyISO = new Date().toLocaleDateString("en-CA", { timeZone: tz });
+    const confirmHint = isConfirm ? [
+      "\n\n=== CONTEXTO CLIENTE (canal WhatsApp Confirmaciones) ===",
+      `El cliente que te escribe tiene teléfono: ${confirm_context.customer_telefono}`,
+      confirm_context.customer_nombre ? `Nombre en WhatsApp: ${confirm_context.customer_nombre}` : "",
+      "\nSIEMPRE al inicio de la conversación (o cuando el cliente pregunte por su reserva) llama la tool `get_customer_reservations` para conocer sus reservas activas. NO le pidas número de teléfono ni le pidas datos de la reserva antes de consultarla — el sistema ya te da esa info.",
+      "\nPuedes:",
+      "- Contarle detalles de sus reservas activas (fecha, hora salida, pasadía, pax, saldo)",
+      "- Dar información general de Atolón (horarios, ubicación, servicios, políticas — usa la KB)",
+      "- Ayudar a crear una NUEVA reserva usando `check_disponibilidad_pasadia`, `get_precios_pasadias` y `crear_reserva_pendiente` (siempre confirma con el cliente ANTES de crear)",
+      "\nNO INVENTES precios ni horarios — usa siempre las tools.",
+    ].filter(Boolean).join("\n") : "";
     const system = [
       `HOY es ${hoy} (${hoyISO}). Cuando el cliente diga fechas relativas ("mañana", "el sábado", "el 15") interpreta con base en HOY. Nunca uses años pasados.\n\n`,
       agent.custom_instructions || "",
       "\n\nESTILO:", styleHint, agent.usa_emoji ? "Puedes usar emojis." : "No uses emojis.",
       agent.assistant_name ? `\nTu nombre es: ${agent.assistant_name}.` : "",
       kbContext ? "\n\n=== KNOWLEDGE BASE ===\n" + kbContext : "",
+      confirmHint,
     ].join(" ").trim();
 
     // 3) Formatear tools para Claude
@@ -133,9 +152,12 @@ Deno.serve(async (req) => {
             // Para tools B2B, el endpoint es 'b2b-tools' con un router interno
             // por `action`. El nombre de la tool es la action.
             const isB2BTool = toolDef.endpoint === "b2b-tools";
+            const isConfirmTool = toolDef.endpoint === "confirm-tools";
             const toolBody = isB2BTool
               ? { action: t.name, aliado_id: b2b_context?.aliado_id, ...t.input }
-              : { tenant_id, ...t.input };
+              : isConfirmTool
+              ? { action: t.name, customer_telefono: confirm_context?.customer_telefono, customer_nombre: confirm_context?.customer_nombre, ...t.input }
+              : { tenant_id, customer_telefono: confirm_context?.customer_telefono, ...t.input };
             const r = await fetch(`${SUPA_URL}/functions/v1/${toolDef.endpoint}`, {
               method: "POST",
               headers: { "content-type": "application/json", "Authorization": `Bearer ${SUPA_KEY}` },
