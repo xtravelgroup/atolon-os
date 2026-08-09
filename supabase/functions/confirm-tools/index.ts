@@ -58,26 +58,59 @@ Deno.serve(async (req) => {
         : { data: [] };
       const salMap = new Map((salidas || []).map(s => [s.id, s]));
 
-      const reservas = (data || []).map(r => ({
-        id: r.id,
-        nombre: r.nombre,
-        fecha: r.fecha,
-        tipo: r.tipo,
-        pax: r.pax,
-        pax_adultos: r.pax_a,
-        pax_ninos: r.pax_n,
-        hora_salida: r.salida_id ? (salMap.get(r.salida_id)?.hora || "—") : (r.hora_llegada || null),
-        embarcacion: r.nombre_embarcacion || (r.salida_id ? salMap.get(r.salida_id)?.nombre : null),
-        estado: r.estado,
-        forma_pago: r.forma_pago,
-        total: r.total,
-        abono: r.abono,
-        saldo: r.saldo,
-        notas: r.notas_club,
-        canal_origen: r.canal,
-      }));
+      // Restar 30 min a la hora de salida = hora en que el cliente debe
+      // estar en el Muelle de la Bodeguita para no perder la lancha.
+      const restar30 = (hhmm: string | null | undefined) => {
+        if (!hhmm || typeof hhmm !== "string" || !hhmm.includes(":")) return null;
+        const [h, m] = hhmm.split(":").map(Number);
+        if (isNaN(h) || isNaN(m)) return null;
+        const total = h * 60 + m - 30;
+        if (total < 0) return null;
+        const hh = Math.floor(total / 60);
+        const mm = total % 60;
+        return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+      };
 
-      return json({ ok: true, count: reservas.length, reservas });
+      const reservas = (data || []).map(r => {
+        const sal = r.salida_id ? salMap.get(r.salida_id) : null;
+        const horaSalida = sal?.hora || null;
+        // Pasadías after_island / sin embarcación no usan lancha Atolón
+        const sinLanchaAtolon = !r.salida_id && !!r.nombre_embarcacion;
+        return {
+          id: r.id,
+          nombre: r.nombre,
+          fecha: r.fecha,
+          tipo: r.tipo,
+          pax: r.pax,
+          pax_adultos: r.pax_a,
+          pax_ninos: r.pax_n,
+          hora_salida_lancha: horaSalida,
+          hora_llegada_bodeguita: sinLanchaAtolon ? null : restar30(horaSalida),
+          punto_encuentro: sinLanchaAtolon
+            ? `Llegas en tu propia embarcación (${r.nombre_embarcacion}) directamente al muelle de Atolón`
+            : "Muelle de la Bodeguita, Cartagena — Puerta 4 (llegar 30 min antes de la hora de salida)",
+          embarcacion: r.nombre_embarcacion || sal?.nombre || null,
+          estado: r.estado,
+          forma_pago: r.forma_pago,
+          total: r.total,
+          abono: r.abono,
+          saldo: r.saldo,
+          notas: r.notas_club,
+          canal_origen: r.canal,
+        };
+      });
+
+      return json({
+        ok: true,
+        count: reservas.length,
+        reservas,
+        info_general: {
+          muelle: "Muelle de la Bodeguita, Cartagena — Puerta 4",
+          anticipacion_min: 30,
+          impuesto_muelle: "NO incluido en el pasadía — se paga en la taquilla de la Bodeguita antes de abordar",
+          duracion_trayecto_min: 15,
+        },
+      });
     }
 
     return json({ ok: false, error: `action desconocida: ${action}` }, 400);
