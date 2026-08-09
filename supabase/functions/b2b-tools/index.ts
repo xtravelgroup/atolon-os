@@ -180,6 +180,8 @@ async function checkAvailability(supa: any, aliado_id: string, params: any) {
 
 async function createBooking(supa: any, aliado_id: string, params: any) {
   const { nombre, telefono, email, fecha, salida_id, tipo, pax, notas } = params;
+  // Para reservas B2B solo el nombre es obligatorio. Tel y email son opcionales
+  // porque el cliente final es del agencia — Atolón no necesita contactarlo directo.
   if (!nombre)    throw new Error("nombre_required");
   if (!fecha)     throw new Error("fecha_required");
   if (!salida_id) throw new Error("salida_id_required");
