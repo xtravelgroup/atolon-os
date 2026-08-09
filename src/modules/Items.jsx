@@ -43,6 +43,25 @@ export default function Items() {
   const [showBulkMinMax, setShowBulkMinMax] = useState(false);
   const [showQR, setShowQR] = useState(false);
 
+  // Stock breakdown por bodega — cargado on-demand cuando se abre el ItemModal
+  // para mostrar Kardex con Stock por bodega. Cargar todo al mount es barato
+  // (una sola llamada) y evita loading state al abrir cada modal.
+  const [locacionesCatalogo, setLocacionesCatalogo] = useState([]);
+  const [stockMapCatalogo, setStockMapCatalogo] = useState({});
+  useEffect(() => {
+    if (!supabase) return;
+    (async () => {
+      const [lR, sR] = await Promise.all([
+        supabase.from("items_locaciones").select("id, nombre, icono").eq("activo", true).order("nombre"),
+        supabase.from("items_stock_locacion").select("item_id, locacion_id, cantidad"),
+      ]);
+      setLocacionesCatalogo(lR.data || []);
+      const map = {};
+      for (const r of (sR.data || [])) map[`${r.item_id}|${r.locacion_id}`] = r.cantidad;
+      setStockMapCatalogo(map);
+    })();
+  }, []);
+
   // Build lookup maps from dynamic categorias
   const catNames = useMemo(() => categorias.filter(c => c.activo !== false).map(c => c.nombre), [categorias]);
   const catIconMap = useMemo(() => Object.fromEntries(categorias.map(c => [c.nombre, c.icon || FALLBACK_ICON])), [categorias]);
@@ -600,8 +619,8 @@ export default function Items() {
           catNames={catNames}
           onSave={saveItem}
           onClose={() => setShowModal(null)}
-          locaciones={locaciones}
-          stockMap={stockPorLoc}
+          locaciones={locacionesCatalogo}
+          stockMap={stockMapCatalogo}
         />
       )}
 
