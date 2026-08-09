@@ -257,7 +257,7 @@ async function generatePaymentLink(supa: any, aliado_id: string, params: any) {
   if (!reserva_id) throw new Error("reserva_id_required");
 
   const { data: r } = await supa.from("reservas")
-    .select("id, total, saldo, estado, aliado_id, nombre").eq("id", reserva_id).maybeSingle();
+    .select("id, total, saldo, estado, aliado_id, nombre, email").eq("id", reserva_id).maybeSingle();
   if (!r) throw new Error("reserva_not_found");
   if (r.aliado_id !== aliado_id) throw new Error("reserva_no_pertenece_a_aliado");
   if (!["pendiente", "pendiente_pago"].includes(r.estado)) throw new Error(`estado_${r.estado}_no_permite_link`);
@@ -265,15 +265,35 @@ async function generatePaymentLink(supa: any, aliado_id: string, params: any) {
   const monto = Number(r.saldo) || Number(r.total) || 0;
   if (monto <= 0) throw new Error("monto_invalido");
 
-  // Regenerar link con vigencia 24h
+  // Regenerar vigencia 24h
   const expira = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
   await supa.from("reservas").update({
     link_expira_at: expira,
     estado: "pendiente_pago",
   }).eq("id", reserva_id);
 
-  // El link real lo compone el cliente app o el edge wompi. Retornamos base URL.
-  const url = `https://www.atolon.co/pago?ref=${reserva_id}`;
+  // Wompi checkout hosted URL con signature de integridad
+  const WOMPI_PUB_KEY = "pub_prod_j2kColsiNhfHj27SWbi62nQpUTNFPZc1";
+  const WOMPI_INTEGRITY_KEY = Deno.env.get("WOMPI_INTEGRITY_KEY") ?? "";
+  const amountCentavos = Math.round(monto * 100).toString();
+  const currency = "COP";
+  let signature = "";
+  if (WOMPI_INTEGRITY_KEY) {
+    const raw = `${reserva_id}${amountCentavos}${currency}${WOMPI_INTEGRITY_KEY}`;
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
+    signature = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+  const parts = [
+    `public-key=${WOMPI_PUB_KEY}`,
+    `currency=${currency}`,
+    `amount-in-cents=${amountCentavos}`,
+    `reference=${reserva_id}`,
+  ];
+  if (signature) parts.push(`signature:integrity=${signature}`);
+  if (r.email)   parts.push(`customer-data:email=${encodeURIComponent(r.email)}`);
+  parts.push(`redirect-url=${encodeURIComponent(`https://www.atolon.co/pago-ok?ref=${reserva_id}`)}`);
+
+  const url = `https://checkout.wompi.co/p/?${parts.join("&")}`;
   return { ok: true, url, monto, vigencia_horas: 24, reserva_id };
 }
 
