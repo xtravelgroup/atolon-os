@@ -82,14 +82,13 @@ async function getAgencyContext(supa: any, aliado_id: string) {
     tipo: al.tipo,
     contacto: al.contacto,
     email: al.email,
-    comision_pct: Number(al.comision) || 0,
     codigo: al.codigo,
     saldo_puntos: saldoPuntos,
     reservas_mes: paxMes,
     revenue_mes: revenueMes,
     cupo_credito: Number(al.cupo_credito) || 0,
     credito_dias: al.credito_dias,
-    modalidad_precio: al.precio_vista_admin || "publico_menos_comision",
+    nota: "IMPORTANTE: Los precios NETOS son valores FIJOS en BD (no calculados con comisión). Cuando el aliado pregunte por precios netos o públicos, SIEMPRE llama check_availability_b2b para obtener los valores reales — NUNCA calcules ni inventes.",
   };
 }
 
