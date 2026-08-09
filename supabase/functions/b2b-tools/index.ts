@@ -46,6 +46,7 @@ Deno.serve(async (req) => {
       case "get_recent_bookings":        return json(await getRecentBookings(supa, aliado_id, params));
       case "redeem_points":              return json(await redeemPoints(supa, aliado_id, params));
       case "update_booking_price_mode":  return json(await updatePriceMode(supa, aliado_id, params));
+      case "cancel_booking":             return json(await cancelBooking(supa, aliado_id, params));
       default: return json({ error: `unknown_action: ${action}` }, 400);
     }
   } catch (e: any) {
@@ -191,10 +192,10 @@ async function createBooking(supa: any, aliado_id: string, params: any) {
   if (!salida_id) throw new Error("salida_id_required");
   if (!tipo)      throw new Error("tipo_required");
   if (!pax)       throw new Error("pax_required");
-  // Defaults: publico + link_pago. El aliado puede cambiar después con
-  // update_booking_price_mode y regenerar link. Evitamos 2 preguntas iniciales.
-  const modoFinal = modo_precio || "publico";
-  const formaFinal = forma_pago || "link_pago";
+  if (!modo_precio) throw new Error("modo_precio_required: pregunta al aliado 'publico o neto?' antes de crear");
+  if (!forma_pago)  throw new Error("forma_pago_required: pregunta al aliado 'transferencia o link_pago?' antes de crear");
+  const modoFinal = modo_precio;
+  const formaFinal = forma_pago;
 
   const { data: al } = await supa.from("aliados_b2b")
     .select("nombre, comision").eq("id", aliado_id).maybeSingle();
@@ -351,6 +352,46 @@ async function redeemPoints(supa: any, aliado_id: string, params: any) {
   });
 
   return { ok: true, puntos_redimidos: Number(puntos), saldo_nuevo: saldo - Number(puntos), reserva_id };
+}
+
+// Cancelar reserva B2B. Solo si NO tiene pago recibido (abono=0).
+// Si ya está pagada, retorna instrucción de escalación humana.
+async function cancelBooking(supa: any, aliado_id: string, params: any) {
+  const { reserva_id } = params;
+  if (!reserva_id) throw new Error("reserva_id_required");
+
+  const { data: r } = await supa.from("reservas")
+    .select("id, estado, aliado_id, abono, total, nombre, forma_pago").eq("id", reserva_id).maybeSingle();
+  if (!r) throw new Error("reserva_not_found");
+  if (r.aliado_id !== aliado_id) throw new Error("reserva_no_pertenece");
+
+  const yaPago = Number(r.abono) > 0;
+  if (yaPago) {
+    return {
+      ok: false,
+      requiere_escalacion: true,
+      reserva_id,
+      motivo: `Reserva ${reserva_id} tiene pago recibido de $${r.abono}. Requiere gestión manual.`,
+      mensaje_al_aliado: "Esta reserva ya tiene pago recibido. Voy a pasarte con tu account manager para que gestione la cancelación y el reembolso según la política.",
+    };
+  }
+
+  if (r.estado === "cancelado") {
+    return { ok: true, ya_cancelada: true, reserva_id };
+  }
+
+  await supa.from("reservas").update({
+    estado: "cancelado",
+    notas: `[BOT WA B2B] Cancelada por el aliado (sin pago recibido)`,
+    updated_at: new Date().toISOString(),
+  }).eq("id", reserva_id);
+
+  return {
+    ok: true,
+    reserva_id,
+    huesped: r.nombre,
+    mensaje_al_aliado: `Reserva ${reserva_id} cancelada correctamente. No había pago recibido, no hay reembolso pendiente.`,
+  };
 }
 
 // Cambiar modo de precio de una reserva pendiente (publico ↔ neto).

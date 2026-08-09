@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
     const agentQuery = isB2B
       ? supa.from("ai_agents").select("*").eq("id", "AGT-ATOLON-B2B").maybeSingle()
       : supa.from("ai_agents").select("*").eq("tenant_id", tenant_id).eq("activo", true).neq("id", "AGT-ATOLON-B2B").limit(1).maybeSingle();
-    const B2B_TOOL_NAMES = ["get_agency_context", "check_availability_b2b", "create_b2b_booking", "generate_payment_link_b2b", "get_recent_bookings", "redeem_points", "update_booking_price_mode"];
+    const B2B_TOOL_NAMES = ["get_agency_context", "check_availability_b2b", "create_b2b_booking", "generate_payment_link_b2b", "get_recent_bookings", "redeem_points", "update_booking_price_mode", "cancel_booking"];
     const [{ data: agent }, { data: kb }, { data: allTools }] = await Promise.all([
       agentQuery,
       supa.from("ai_knowledge_base").select("*").eq("tenant_id", tenant_id).eq("activo", true).limit(20),
