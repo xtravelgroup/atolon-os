@@ -136,7 +136,9 @@ async function logConfirmToConcierge(reserva, telefono, resumen, template) {
     const tenantId = "T-ATOLON";
     const contactId = String(telefono).replace(/\D/g, ""); // sin "+", como Meta manda
     if (!contactId) return;
-    const convId = `CV-${tenantId}-${contactId}`;
+    // Sufijo -confirm para NO mezclar con conversaciones B2B (-b2b) o
+    // Concierge normal (sin sufijo) del mismo teléfono.
+    const convId = `CV-${tenantId}-${contactId}-confirm`;
     await supabase.from("ai_conversations").upsert({
       id: convId,
       tenant_id: tenantId,

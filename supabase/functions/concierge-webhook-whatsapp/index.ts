@@ -139,8 +139,11 @@ Deno.serve(async (req) => {
       }, { onConflict: "telefono_e164" });
     }
 
-    // 3) Upsert conversation (compartido concierge + b2b + confirm)
-    const convId = `CV-${tenant_id}-${contact_id}`;
+    // 3) Upsert conversation — un contacto puede tener conversaciones separadas
+    // en B2B, Confirm y Concierge normal. El convId incluye el canal_tipo para
+    // que no se mezclen (sin sufijo = concierge web/legacy).
+    const canalSuffix = isB2B ? "-b2b" : isConfirm ? "-confirm" : "";
+    const convId = `CV-${tenant_id}-${contact_id}${canalSuffix}`;
     await supa.from("ai_conversations").upsert({
       id: convId, tenant_id, channel_id: channel.id, channel_tipo: "whatsapp",
       contact_id, contact_nombre,
