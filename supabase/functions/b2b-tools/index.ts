@@ -188,8 +188,10 @@ async function createBooking(supa: any, aliado_id: string, params: any) {
   if (!salida_id) throw new Error("salida_id_required");
   if (!tipo)      throw new Error("tipo_required");
   if (!pax)       throw new Error("pax_required");
-  if (!modo_precio) throw new Error("modo_precio_required (pregunta al aliado: publico o neto)");
-  if (!forma_pago)  throw new Error("forma_pago_required (pregunta al aliado: transferencia o link_pago)");
+  // Defaults: publico + link_pago. El aliado puede cambiar después con
+  // update_booking_price_mode y regenerar link. Evitamos 2 preguntas iniciales.
+  const modoFinal = modo_precio || "publico";
+  const formaFinal = forma_pago || "link_pago";
 
   const { data: al } = await supa.from("aliados_b2b")
     .select("nombre, comision").eq("id", aliado_id).maybeSingle();
@@ -213,11 +215,11 @@ async function createBooking(supa: any, aliado_id: string, params: any) {
 
   const publico = Number(pas.precio) || 0;
   const neto = Number(pas.precio_neto_agencia) || Math.round(publico * (1 - (Number(al.comision) || 0) / 100));
-  const modoNorm = String(modo_precio).toLowerCase();
+  const modoNorm = String(modoFinal).toLowerCase();
   const precioU = modoNorm === "neto" ? neto : publico;
   const total = precioU * Number(pax);
 
-  const formaNorm = String(forma_pago).toLowerCase();
+  const formaNorm = String(formaFinal).toLowerCase();
   const esLink = formaNorm.includes("link") || formaNorm.includes("wompi");
   const estado = esLink ? "pendiente_pago" : "pendiente";
 
