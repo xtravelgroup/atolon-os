@@ -246,6 +246,13 @@ async function createBooking(supa: any, aliado_id: string, params: any) {
     forma_pago: esLink ? "link_pago" : "Transferencia",
     precio_unitario: precioU,
     total,
+    // Ambos totales calculados para que si el aliado cambia de opinión
+    // el bot use el número CORRECTO sin inventar (mucho menos calcular
+    // publico × comision — el neto es un valor fijo de BD, no derivado).
+    total_publico: publico * Number(pax),
+    total_neto: neto * Number(pax),
+    precio_publico_unit: publico,
+    precio_neto_unit: neto,
     aliado: al.nombre,
     proximo_paso: esLink
       ? "Usa generate_payment_link_b2b para obtener el URL Wompi para enviar al cliente."
