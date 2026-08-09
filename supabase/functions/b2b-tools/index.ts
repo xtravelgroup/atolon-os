@@ -45,6 +45,7 @@ Deno.serve(async (req) => {
       case "generate_payment_link_b2b":  return json(await generatePaymentLink(supa, aliado_id, params));
       case "get_recent_bookings":        return json(await getRecentBookings(supa, aliado_id, params));
       case "redeem_points":              return json(await redeemPoints(supa, aliado_id, params));
+      case "update_booking_price_mode":  return json(await updatePriceMode(supa, aliado_id, params));
       default: return json({ error: `unknown_action: ${action}` }, 400);
     }
   } catch (e: any) {
@@ -332,6 +333,40 @@ async function redeemPoints(supa: any, aliado_id: string, params: any) {
   });
 
   return { ok: true, puntos_redimidos: Number(puntos), saldo_nuevo: saldo - Number(puntos), reserva_id };
+}
+
+// Cambiar modo de precio de una reserva pendiente (publico ↔ neto).
+// Ajusta precio_u + total. El link Wompi se regenera vía generate_payment_link_b2b.
+async function updatePriceMode(supa: any, aliado_id: string, params: any) {
+  const { reserva_id, modo_precio } = params;
+  if (!reserva_id) throw new Error("reserva_id_required");
+  if (!modo_precio) throw new Error("modo_precio_required (publico|neto)");
+
+  const { data: r } = await supa.from("reservas")
+    .select("id, tipo, pax, estado, aliado_id, precio_publico, precio_neto").eq("id", reserva_id).maybeSingle();
+  if (!r) throw new Error("reserva_not_found");
+  if (r.aliado_id !== aliado_id) throw new Error("reserva_no_pertenece");
+  if (!["pendiente", "pendiente_pago"].includes(r.estado)) throw new Error(`estado_${r.estado}_no_modificable`);
+
+  const modo = String(modo_precio).toLowerCase();
+  const precioU = modo === "neto" ? Number(r.precio_neto) : Number(r.precio_publico);
+  if (!precioU || precioU <= 0) throw new Error("precio_no_disponible");
+  const total = precioU * Number(r.pax || 1);
+
+  await supa.from("reservas").update({
+    precio_u: precioU,
+    total,
+    saldo: total,
+    notas: `[BOT WA B2B] Modo precio actualizado a: ${modo}`,
+    updated_at: new Date().toISOString(),
+  }).eq("id", reserva_id);
+
+  return {
+    ok: true, reserva_id, modo_precio: modo,
+    nuevo_precio_unitario: precioU,
+    nuevo_total: total,
+    nota: "Total actualizado. Si tenía link Wompi, LLAMA generate_payment_link_b2b para regenerarlo con el nuevo amount.",
+  };
 }
 
 function firstDayOfMonth() {
