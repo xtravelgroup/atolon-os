@@ -46,14 +46,59 @@ Deno.serve(async (req) => {
 
     const contact_id = msg.from;
     const contact_nombre = contactMeta?.profile?.name || null;
-    // Media (imagen/documento): probablemente comprobante de pago en flujo B2B
+    // Media (imagen/documento): probablemente comprobante de pago en flujo B2B.
+    // Descargamos el archivo de Meta y lo subimos al bucket 'comprobantes'
+    // para que el staff lo vea desde el módulo Concierge.
     let texto = msg.text?.body;
+    let mediaUrl: string | null = null;
     if (!texto) {
-      if (msg.type === "image")    texto = "[Cliente envió una IMAGEN — probablemente comprobante de pago o foto de referencia]";
-      else if (msg.type === "document") texto = `[Cliente envió un DOCUMENTO (${msg.document?.filename || "sin nombre"}) — probablemente comprobante de pago PDF]`;
-      else if (msg.type === "audio") texto = "[Cliente envió un audio de WhatsApp]";
-      else if (msg.type === "video") texto = "[Cliente envió un video]";
-      else texto = `[${msg.type}]`;
+      const mediaId  = msg.image?.id || msg.document?.id || msg.audio?.id || msg.video?.id;
+      const mimeType = msg.image?.mime_type || msg.document?.mime_type || msg.audio?.mime_type || msg.video?.mime_type || "";
+      const filename = msg.document?.filename || null;
+      const tipoStr  = msg.type;
+
+      if (mediaId && accessToken) {
+        try {
+          // 1) Obtener URL de descarga desde Meta Graph API
+          const metaRes = await fetch(`https://graph.facebook.com/v20.0/${mediaId}`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          const metaJson = await metaRes.json();
+          const downloadUrl = metaJson?.url;
+          if (downloadUrl) {
+            // 2) Descargar el archivo
+            const fileRes = await fetch(downloadUrl, {
+              headers: { Authorization: `Bearer ${accessToken}` },
+            });
+            if (fileRes.ok) {
+              const bytes = new Uint8Array(await fileRes.arrayBuffer());
+              // 3) Path: b2b/{aliado_id or unknown}/{msg_id}.{ext}
+              const extFromMime = (mimeType.split("/")[1] || "bin").split(";")[0].replace("jpeg", "jpg");
+              const owner = isB2B && aliado ? aliado.aliado_id : "concierge";
+              const path = `wa/${owner}/${msg.id}.${extFromMime}`;
+              const { error: upErr } = await supa.storage.from("comprobantes").upload(path, bytes, {
+                contentType: mimeType || "application/octet-stream",
+                upsert: true,
+              });
+              if (!upErr) {
+                const { data: pub } = supa.storage.from("comprobantes").getPublicUrl(path);
+                mediaUrl = pub?.publicUrl || null;
+              } else {
+                console.warn("[webhook] upload storage error:", upErr.message);
+              }
+            }
+          }
+        } catch (e: any) {
+          console.warn("[webhook] media download err:", e.message);
+        }
+      }
+
+      const urlNota = mediaUrl ? ` — VER: ${mediaUrl}` : "";
+      if (tipoStr === "image")    texto = `[IMAGEN recibida${urlNota}]`;
+      else if (tipoStr === "document") texto = `[DOCUMENTO ${filename || "sin nombre"}${urlNota}]`;
+      else if (tipoStr === "audio") texto = `[AUDIO WhatsApp${urlNota}]`;
+      else if (tipoStr === "video") texto = `[VIDEO${urlNota}]`;
+      else texto = `[${tipoStr}]`;
     }
 
     // ── ROUTER B2B: verificar que el emisor sea agencia registrada ──

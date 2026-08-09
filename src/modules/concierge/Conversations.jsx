@@ -87,16 +87,36 @@ export default function Conversations({ tenantId }) {
               </div>
             </div>
             <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, padding: 8 }}>
-              {messages.map(m => (
+              {messages.map(m => {
+                // Detectar media adjunta: contenido tiene formato "[IMAGEN|DOCUMENTO... — VER: <url>]"
+                const urlMatch = String(m.contenido || "").match(/VER:\s*(https?:\/\/[^\s\]]+)/i);
+                const mediaUrl = urlMatch?.[1];
+                const isImg = mediaUrl && /\.(jpe?g|png|webp|gif)(\?|$)/i.test(mediaUrl);
+                const isPdf = mediaUrl && /\.(pdf)(\?|$)/i.test(mediaUrl);
+                return (
                 <div key={m.id} style={{ display: "flex", justifyContent: m.rol === "user" ? "flex-start" : "flex-end" }}>
                   <div style={{ maxWidth: "80%", background: m.rol === "user" ? B.navy : (m.origen === "human" ? B.success : B.sky), color: m.rol === "user" ? "#fff" : B.navy, padding: "8px 12px", borderRadius: 10, fontSize: 12, whiteSpace: "pre-wrap" }}>
-                    {m.contenido}
+                    {mediaUrl && isImg && (
+                      <a href={mediaUrl} target="_blank" rel="noreferrer" style={{ display: "block", marginBottom: 6 }}>
+                        <img src={mediaUrl} alt="adjunto" style={{ maxWidth: "100%", maxHeight: 220, borderRadius: 6, display: "block" }} />
+                      </a>
+                    )}
+                    {mediaUrl && !isImg && (
+                      <a href={mediaUrl} target="_blank" rel="noreferrer" style={{ display: "inline-block", padding: "6px 10px", background: "rgba(255,255,255,0.2)", borderRadius: 6, color: "inherit", textDecoration: "none", marginBottom: 6, fontSize: 11 }}>
+                        {isPdf ? "📄 Abrir PDF" : "📎 Abrir adjunto"}
+                      </a>
+                    )}
+                    {!mediaUrl && m.contenido}
+                    {mediaUrl && (
+                      <div style={{ fontSize: 10, opacity: 0.7 }}>{String(m.contenido || "").replace(/\s*—?\s*VER:\s*https?:\/\/\S+/i, "").replace(/[\[\]]/g, "")}</div>
+                    )}
                     <div style={{ fontSize: 9, marginTop: 4, opacity: 0.6 }}>
                       {m.origen === "human" ? "👤 " + (m.autor_email?.split("@")[0] || "humano") : m.rol === "assistant" ? "🤖 bot" : "usuario"} · {new Date(m.created_at).toLocaleTimeString("es-CO",{hour:"2-digit",minute:"2-digit"})}
                     </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
               <input value={reply} onChange={e => setReply(e.target.value)} onKeyDown={e => e.key === "Enter" && enviarReply()} placeholder="Escribe una respuesta manual…" style={IS} />

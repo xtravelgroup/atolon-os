@@ -13,6 +13,7 @@ export const GRUPOS_NAV = [
     items: [
       { key: "pasadias",    label: "Pasadías",    icon: "☀"  },
       { key: "reservas",    label: "Reservas",    icon: "⚓"  },
+      { key: "conversaciones_ai", label: "Conversaciones", icon: "💬" },
       { key: "clientes",    label: "Clientes",    icon: "👤" },
       { key: "b2b",         label: "B2B",         icon: "☯"  },
       { key: "eventos",     label: "Eventos",     icon: "♫"  },

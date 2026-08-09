@@ -40,11 +40,11 @@ const NAV = [
   ]},
 ];
 
-export default function AtolonConcierge() {
+export default function AtolonConcierge({ initialTab = "home" } = {}) {
   const { isMobile } = useMobile();
   const [tenants, setTenants] = useState([]);
   const [tenantId, setTenantId] = useState(localStorage.getItem("concierge_tenant") || "T-ATOLON");
-  const [tab, setTab] = useState("home");
+  const [tab, setTab] = useState(initialTab);
   const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
   const [needsReply, setNeedsReply] = useState(0);
 
