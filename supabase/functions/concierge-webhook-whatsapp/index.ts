@@ -10,7 +10,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const SUPA_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPA_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
-const UNAUTHORIZED_MSG = "🔐 Este canal es exclusivo para agencias registradas de Atolón. Si quieres ser aliado, escríbenos a ventas@atolon.co\n\nPara reservar como cliente, usa nuestro WhatsApp principal: +1 786-917-3131";
+const UNAUTHORIZED_MSG = "Bienvenidos a Atolón Beach Club 🌴\nPara información de pasadías visita www.atoloncartagena.com o escríbenos por WhatsApp al +57 300 319 4215\n\nEste canal es exclusivo para agencias asociadas a Atolón. El número desde el que nos escribes no está registrado.\n\n¿Eres una agencia registrada o quieres registrarte con nosotros?";
 
 Deno.serve(async (req) => {
   const url = new URL(req.url);

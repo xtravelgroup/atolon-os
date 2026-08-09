@@ -28,19 +28,32 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { tenant_id, message, history = [], conversation_id, playground } = body;
+    const { tenant_id, message, history = [], conversation_id, playground, b2b_context } = body;
     if (!tenant_id || !message) {
       return json({ ok: false, error: "tenant_id y message requeridos" }, 400);
     }
     if (!ANTHROPIC_KEY) return json({ ok: false, error: "Falta ANTHROPIC_API_KEY" }, 500);
 
-    // 1) Cargar agente + KB activa + tools activas
-    const [{ data: agent }, { data: kb }, { data: tools }] = await Promise.all([
-      supa.from("ai_agents").select("*").eq("tenant_id", tenant_id).eq("activo", true).limit(1).maybeSingle(),
+    // 1) Elegir agente + tools según canal
+    // - B2B (viene b2b_context desde el router): usar AGT-ATOLON-B2B + tools con
+    //   nombre que empieza con get_agency/check_availability_b2b/create_b2b/etc.
+    // - Concierge normal: usar el primer agente activo del tenant + tools NO-B2B
+    const isB2B = !!b2b_context?.aliado_id;
+    const agentQuery = isB2B
+      ? supa.from("ai_agents").select("*").eq("id", "AGT-ATOLON-B2B").maybeSingle()
+      : supa.from("ai_agents").select("*").eq("tenant_id", tenant_id).eq("activo", true).neq("id", "AGT-ATOLON-B2B").limit(1).maybeSingle();
+    const B2B_TOOL_NAMES = ["get_agency_context", "check_availability_b2b", "create_b2b_booking", "generate_payment_link_b2b", "get_recent_bookings", "redeem_points"];
+    const [{ data: agent }, { data: kb }, { data: allTools }] = await Promise.all([
+      agentQuery,
       supa.from("ai_knowledge_base").select("*").eq("tenant_id", tenant_id).eq("activo", true).limit(20),
       supa.from("ai_tools").select("*").eq("tenant_id", tenant_id).eq("activo", true),
     ]);
-    if (!agent) return json({ ok: false, error: "No hay agente activo para el tenant" }, 400);
+    if (!agent) return json({ ok: false, error: `No hay agente ${isB2B ? "B2B" : "principal"} activo` }, 400);
+    const tools = (allTools || []).filter((t: any) =>
+      isB2B
+        ? B2B_TOOL_NAMES.includes(t.nombre)
+        : !B2B_TOOL_NAMES.includes(t.nombre)
+    );
 
     // 2) Armar system prompt
     const kbContext = (kb || []).map((k: any) => `## ${k.nombre}\n${(k.contenido || k.url || "").slice(0, 2000)}`).join("\n\n---\n\n");
@@ -117,10 +130,16 @@ Deno.serve(async (req) => {
         let output: any = { error: "tool no encontrado" };
         try {
           if (toolDef?.endpoint) {
+            // Para tools B2B, el endpoint es 'b2b-tools' con un router interno
+            // por `action`. El nombre de la tool es la action.
+            const isB2BTool = toolDef.endpoint === "b2b-tools";
+            const toolBody = isB2BTool
+              ? { action: t.name, aliado_id: b2b_context?.aliado_id, ...t.input }
+              : { tenant_id, ...t.input };
             const r = await fetch(`${SUPA_URL}/functions/v1/${toolDef.endpoint}`, {
               method: "POST",
               headers: { "content-type": "application/json", "Authorization": `Bearer ${SUPA_KEY}` },
-              body: JSON.stringify({ tenant_id, ...t.input }),
+              body: JSON.stringify(toolBody),
             });
             output = r.ok ? await r.json() : { error: `HTTP ${r.status}` };
           }
