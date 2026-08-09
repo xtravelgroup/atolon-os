@@ -106,7 +106,7 @@ async function checkAvailability(supa: any, aliado_id: string, params: any) {
     supa.from("cierres_fecha").select("tipo, salida_id").eq("fecha", fecha),
     supa.from("aliados_b2b").select("comision").eq("id", aliado_id).maybeSingle(),
     supa.from("salidas").select("id, hora, hora_regreso, capacidad_total, activo, auto_apertura, auto_umbral, orden").eq("activo", true).order("orden"),
-    supa.from("pasadias").select("nombre, precio, precio_neto_agencia, precio_nino, precio_neto_nino, sin_embarcacion")
+    supa.from("pasadias").select("nombre, precio, precio_neto_agencia, precio_nino, precio_neto_nino, sin_embarcacion, min_pax")
       .eq("activo", true).eq("web_publica", true).eq("sin_embarcacion", false).order("orden"),
   ]);
 
@@ -157,10 +157,13 @@ async function checkAvailability(supa: any, aliado_id: string, params: any) {
     const publico = Number(p.precio) || 0;
     const netoFijo = Number(p.precio_neto_agencia) || 0;
     const netoAgencia = netoFijo > 0 ? netoFijo : Math.round(publico * (1 - comision / 100));
+    const minPax = Number(p.min_pax) || 1;
     return {
       tipo: p.nombre,
       precio_publico: publico,
       precio_neto_agencia: netoAgencia,
+      min_pax: minPax,
+      caben_las_personas: paxNum >= minPax,
     };
   }).filter((p: any) =>
     p.precio_publico > 0
@@ -200,7 +203,7 @@ async function createBooking(supa: any, aliado_id: string, params: any) {
   // Buscar pasadía por nombre (case-insensitive, contiene)
   const tipoNorm = String(tipo || "").toUpperCase().trim();
   const { data: pases } = await supa.from("pasadias")
-    .select("nombre, precio, precio_neto_agencia")
+    .select("nombre, precio, precio_neto_agencia, min_pax")
     .eq("activo", true).eq("web_publica", true);
   const pas = (pases || []).find((p: any) => {
     const n = String(p.nombre).toUpperCase();
@@ -212,6 +215,12 @@ async function createBooking(supa: any, aliado_id: string, params: any) {
         || (tipoNorm.includes("ATOLON") && n.includes("ATOLON") && n.includes("EXPERIENCE"));
   });
   if (!pas) throw new Error(`tipo_invalido: no encontre "${tipo}" en pasadias`);
+
+  // Validar mínimo de pax
+  const minPax = Number(pas.min_pax) || 1;
+  if (Number(pax) < minPax) {
+    throw new Error(`min_pax_violado: ${pas.nombre} requiere mínimo ${minPax} personas, pediste ${pax}`);
+  }
 
   const publico = Number(pas.precio) || 0;
   const neto = Number(pas.precio_neto_agencia) || Math.round(publico * (1 - (Number(al.comision) || 0) / 100));
@@ -235,7 +244,7 @@ async function createBooking(supa: any, aliado_id: string, params: any) {
     forma_pago: esLink ? "link_pago" : "Transferencia",
     aliado_id, vendedor: null,
     notas: `[BOT WA B2B] ${notas || ""} — Modo precio: ${modoNorm} — Forma pago: ${esLink ? "link_pago" : "Transferencia"}`.trim(),
-    link_expira_at: esLink ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() : null,
+    link_expira_at: esLink ? new Date(Date.now() + 60 * 60 * 1000).toISOString() : null,
     idioma: "es",
   });
   if (error) throw new Error(`insert_reserva: ${error.message}`);
@@ -275,8 +284,8 @@ async function generatePaymentLink(supa: any, aliado_id: string, params: any) {
   const monto = Number(r.saldo) || Number(r.total) || 0;
   if (monto <= 0) throw new Error("monto_invalido");
 
-  // Regenerar vigencia 24h
-  const expira = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  // Vigencia 1 hora — link corto para forzar pago inmediato
+  const expira = new Date(Date.now() + 60 * 60 * 1000).toISOString();
   await supa.from("reservas").update({
     link_expira_at: expira,
     estado: "pendiente_pago",
@@ -304,7 +313,7 @@ async function generatePaymentLink(supa: any, aliado_id: string, params: any) {
   parts.push(`redirect-url=${encodeURIComponent(`https://www.atolon.co/pago-ok?ref=${reserva_id}`)}`);
 
   const url = `https://checkout.wompi.co/p/?${parts.join("&")}`;
-  return { ok: true, url, monto, vigencia_horas: 24, reserva_id };
+  return { ok: true, url, monto, vigencia_horas: 1, reserva_id };
 }
 
 async function getRecentBookings(supa: any, aliado_id: string, params: any) {
