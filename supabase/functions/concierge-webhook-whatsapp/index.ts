@@ -46,7 +46,15 @@ Deno.serve(async (req) => {
 
     const contact_id = msg.from;
     const contact_nombre = contactMeta?.profile?.name || null;
-    const texto = msg.text?.body || (msg.type === "audio" ? "[audio]" : `[${msg.type}]`);
+    // Media (imagen/documento): probablemente comprobante de pago en flujo B2B
+    let texto = msg.text?.body;
+    if (!texto) {
+      if (msg.type === "image")    texto = "[Cliente envió una IMAGEN — probablemente comprobante de pago o foto de referencia]";
+      else if (msg.type === "document") texto = `[Cliente envió un DOCUMENTO (${msg.document?.filename || "sin nombre"}) — probablemente comprobante de pago PDF]`;
+      else if (msg.type === "audio") texto = "[Cliente envió un audio de WhatsApp]";
+      else if (msg.type === "video") texto = "[Cliente envió un video]";
+      else texto = `[${msg.type}]`;
+    }
 
     // ── ROUTER B2B: verificar que el emisor sea agencia registrada ──
     let aliado: any = null;
