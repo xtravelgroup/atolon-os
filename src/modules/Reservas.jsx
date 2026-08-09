@@ -2450,7 +2450,8 @@ function ReservaModal({ onClose, onSave, isMobile, salidaList = [], aliadoList =
       fecha_pago: todayStr(),
     } : { ...form, _isLink: isLink };
     const reservaId = await onSave(payload);
-    if (isLink && reservaId) {
+    if (!reservaId) return; // addReserva ya mostró el error — no cerrar el modal
+    if (isLink) {
       setLinkPago(`${window.location.origin}/pago?reserva=${reservaId}`);
     } else {
       onClose();
@@ -4328,7 +4329,12 @@ export default function Reservas() {
         timestamp: new Date().toISOString(),
       }] : [],
     };
-    await supabase.from("reservas").insert(row);
+    const { error: insErr } = await supabase.from("reservas").insert(row);
+    if (insErr) {
+      alert("Error al guardar reserva: " + insErr.message);
+      console.error("[addReserva] insert error:", insErr, "row:", row);
+      return null;
+    }
     logAccion({ modulo: "reservas", accion: "crear_reserva", tabla: "reservas", registroId: row.id,
       datosDespues: row, notas: `Canal: ${row.canal} · ${row.pax} pax · ${COP(row.total)}` });
     // Si nace confirmada (cortesía, walk-in con pago total, etc.) → WA confirmación
