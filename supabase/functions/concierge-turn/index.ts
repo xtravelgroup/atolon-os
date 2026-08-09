@@ -155,11 +155,12 @@ Deno.serve(async (req) => {
     const price = PRICE[agent.model] || { in: 3.0, out: 15.0 };
     const costUsd = (usageIn * price.in + usageOut * price.out) / 1_000_000;
 
-    // 7) Persistir mensaje si no es playground y hay conversation_id
+    // 7) Persistir SOLO el reply del asistente si hay conversation_id
+    // (el mensaje del user ya lo insertó concierge-webhook-whatsapp;
+    // duplicarlo aquí rompe el historial y Claude pierde contexto).
     if (!playground && conversation_id) {
       const uid = `MSG-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       await supa.from("ai_messages").insert([
-        { id: `${uid}-u`, conversation_id, tenant_id, rol: "user",      contenido: message, origen: "user" },
         { id: `${uid}-a`, conversation_id, tenant_id, rol: "assistant", contenido: reply, origen: "agent",
           tool_calls: toolCalls, usage_tokens_in: usageIn, usage_tokens_out: usageOut, usage_cost_usd: costUsd },
       ]);
