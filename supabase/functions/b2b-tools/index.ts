@@ -96,52 +96,65 @@ async function getAgencyContext(supa: any, aliado_id: string) {
 async function checkAvailability(supa: any, aliado_id: string, params: any) {
   const { fecha, pax } = params;
   if (!fecha) throw new Error("fecha_required");
+  const paxNum = Math.max(1, Number(pax) || 1);
 
-  // Cupos disponibles por salida
-  const [{ data: reservas }, { data: cierres }, { data: aliado }] = await Promise.all([
+  // Cupos por salida + cierres + config real de BD + aliado
+  const [{ data: reservas }, { data: cierres }, { data: aliado }, { data: salidasCfg }] = await Promise.all([
     supa.from("reservas").select("salida_id, pax")
       .eq("fecha", fecha)
       .in("estado", ["confirmado", "pendiente", "pendiente_pago", "check_in"]),
     supa.from("cierres_fecha").select("tipo, salida_id").eq("fecha", fecha),
     supa.from("aliados_b2b").select("comision").eq("id", aliado_id).maybeSingle(),
+    supa.from("salidas").select("id, hora, capacidad_total, activo, auto_apertura, auto_umbral, orden").eq("activo", true).order("orden"),
   ]);
 
   const cierreTotal = (cierres || []).some((c: any) => c.tipo === "total");
-  if (cierreTotal) return { disponible: false, motivo: "fecha_cerrada_total", salidas: [] };
+  if (cierreTotal) return { disponible_para_pax: false, fecha, pax_solicitado: paxNum, motivo: "fecha_cerrada", salidas_abiertas: [] };
 
   const comision = Number(aliado?.comision) || 0;
-
-  // Precios por tipo de pase — mesmo lógica del portal (público × (1 − comisión))
-  const pases = [
-    { tipo: "VIP Pass",          precio_publico: 320000 },
-    { tipo: "Exclusive Pass",    precio_publico: 590000 },
-    { tipo: "Atolon Experience", precio_publico: 1100000 },
-  ].map(p => ({ ...p, precio_neto: Math.round(p.precio_publico * (1 - comision / 100)) }));
-
-  const salidasCfg = [
-    { id: "S1", hora: "08:30", cap: 30 },
-    { id: "S2", hora: "10:00", cap: 30 },
-    { id: "S3", hora: "11:30", cap: 25 },
-    { id: "S4", hora: "13:00", cap: 12 },
-  ];
-
   const cerradasSalida = new Set((cierres || []).filter((c: any) => c.salida_id).map((c: any) => c.salida_id));
   const paxPorSalida: Record<string, number> = {};
   for (const r of (reservas || [])) {
     if (r.salida_id) paxPorSalida[r.salida_id] = (paxPorSalida[r.salida_id] || 0) + (Number(r.pax) || 0);
   }
 
-  const salidas = salidasCfg.map(s => {
-    const ocupados = paxPorSalida[s.id] || 0;
-    const disponibles = Math.max(0, s.cap - ocupados);
-    return {
-      id: s.id, hora: s.hora, cap: s.cap, ocupados, disponibles,
-      cerrada: cerradasSalida.has(s.id),
-      caben_pax: pax ? disponibles >= Number(pax) : true,
-    };
+  // Auto-apertura: una salida "auto" solo se muestra si la ANTERIOR llegó a su umbral
+  const cfg = salidasCfg || [];
+  const salidasVisibles = cfg.filter((s: any, i: number) => {
+    if (cerradasSalida.has(s.id)) return false;
+    if (!s.auto_apertura) return true;
+    const prev = cfg[i - 1];
+    if (!prev) return true;
+    const pct = (paxPorSalida[prev.id] || 0) / (prev.capacidad_total || 1);
+    return pct >= (prev.auto_umbral || 75) / 100;
   });
 
-  return { disponible: salidas.some(s => !s.cerrada && s.disponibles > 0), fecha, salidas, pases, comision_pct: comision };
+  // Formato de salidas: SOLO indicamos si caben las N personas, no exponemos cupos
+  const salidas_abiertas = salidasVisibles.map((s: any) => {
+    const disponibles = Math.max(0, s.capacidad_total - (paxPorSalida[s.id] || 0));
+    return {
+      id: s.id,
+      hora: s.hora,
+      caben_las_personas: disponibles >= paxNum,
+    };
+  }).filter((s: any) => s.caben_las_personas);
+
+  // Precios netos (público × (1 - comisión))
+  const pases = [
+    { tipo: "VIP Pass",          precio_publico: 320000 },
+    { tipo: "Exclusive Pass",    precio_publico: 590000 },
+    { tipo: "Atolon Experience", precio_publico: 1100000 },
+  ].map(p => ({ tipo: p.tipo, precio_neto: Math.round(p.precio_publico * (1 - comision / 100)) }));
+
+  return {
+    disponible_para_pax: salidas_abiertas.length > 0,
+    fecha,
+    pax_solicitado: paxNum,
+    salidas_abiertas,
+    pases,
+    comision_pct: comision,
+    nota: "Solo muestra al agencia si caben las personas y a qué horas. NO mencionar cupos exactos ni disponibilidad numérica.",
+  };
 }
 
 async function createBooking(supa: any, aliado_id: string, params: any) {
