@@ -14,7 +14,9 @@ export default function Conversations({ tenantId }) {
   const load = useCallback(async () => {
     let q = supabase.from("ai_conversations").select("*").eq("tenant_id", tenantId).order("ultimo_mensaje_at", { ascending: false, nullsFirst: false }).limit(200);
     if (filter === "needs_reply") q = q.eq("estado", "needs_reply");
-    if (filter === "handoff") q = q.eq("estado", "handoff");
+    if (filter === "handoff")     q = q.eq("estado", "handoff");
+    // Filtro B2B: conversaciones que llegan del canal WA B2B (metadata.canal_tipo='b2b')
+    if (filter === "b2b")         q = q.filter("metadata->>canal_tipo", "eq", "b2b");
     if (search) q = q.ilike("contact_nombre", `%${search}%`);
     const { data } = await q;
     setRows(data || []);
@@ -44,7 +46,7 @@ export default function Conversations({ tenantId }) {
     <div style={{ padding: 20, display: "flex", flexDirection: "column", height: "calc(100vh - 160px)" }}>
       <HEADER title="💬 Conversaciones" subtitle={`${rows.length} conversaciones`} />
       <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-        {[["all","All"],["needs_reply","Needs reply"],["handoff","Handoff"]].map(([k,l]) => (
+        {[["all","All"],["needs_reply","Needs reply"],["handoff","Handoff"],["b2b","🏢 B2B"]].map(([k,l]) => (
           <button key={k} onClick={() => setFilter(k)} style={{ ...BTN(filter===k?B.sky:B.navyLight, filter===k?B.navy:"#fff"), fontSize: 11 }}>{l}</button>
         ))}
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Buscar contactos" style={{ ...IS, maxWidth: 280 }} />
@@ -59,8 +61,9 @@ export default function Conversations({ tenantId }) {
                   <div style={{ fontWeight: 700, color: "#fff", fontSize: 13 }}>{r.contact_nombre || r.contact_id}</div>
                   <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{r.ultimo_mensaje_at ? new Date(r.ultimo_mensaje_at).toLocaleTimeString("es-CO",{hour:"2-digit",minute:"2-digit"}) : ""}</div>
                 </div>
-                <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+                <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>
                   {r.channel_tipo && TAG(B.sky, r.channel_tipo)}
+                  {r.metadata?.canal_tipo === "b2b" && TAG("#a88530", `🏢 ${r.metadata?.aliado_nombre || "B2B"}`)}
                   {r.estado !== "live" && TAG(r.estado === "handoff" ? B.danger : B.warning, r.estado)}
                   {r.fuente === "meta_ad" && TAG("#a78bfa", "Meta ad")}
                 </div>
