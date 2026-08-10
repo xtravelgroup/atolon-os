@@ -118,6 +118,36 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (action === "request_handoff") {
+      const motivo = String(args.motivo || "sin motivo").trim().slice(0, 300);
+      const tema = String(args.tema || "otro").trim().slice(0, 50);
+      const reservaId = String(args.reserva_id || "").trim() || null;
+      const convId = String(args.conversation_id || body.conversation_id || "").trim();
+      if (!convId) return json({ ok: false, error: "conversation_id requerido" }, 400);
+
+      const { data: conv } = await supa.from("ai_conversations")
+        .select("metadata").eq("id", convId).maybeSingle();
+      const prevMeta = conv?.metadata || {};
+      const nuevoMeta = {
+        ...prevMeta,
+        handoff: {
+          motivo, tema, reserva_id: reservaId,
+          solicitado_at: new Date().toISOString(),
+          canal_tipo: prevMeta.canal_tipo || null,
+        },
+      };
+      const { error } = await supa.from("ai_conversations").update({
+        estado: "handoff",
+        metadata: nuevoMeta,
+      }).eq("id", convId);
+      if (error) return json({ ok: false, error: error.message });
+      return json({
+        ok: true,
+        handoff_registrado: true,
+        mensaje_para_cliente: "Voy a pasar tu caso a un asesor humano. Te contactarán en breve. No hay nada más que necesites hacer por ahora.",
+      });
+    }
+
     return json({ ok: false, error: `action desconocida: ${action}` }, 400);
   } catch (e: any) {
     return json({ ok: false, error: e.message || String(e) }, 500);

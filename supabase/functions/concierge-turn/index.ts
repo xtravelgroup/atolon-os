@@ -50,7 +50,7 @@ Deno.serve(async (req) => {
       ? supa.from("ai_agents").select("*").eq("id", "AGT-ATOLON-CONFIRM").maybeSingle()
       : supa.from("ai_agents").select("*").eq("id", "AGT-ATOLON-MAIN").maybeSingle();
     const B2B_TOOL_NAMES = ["get_agency_context", "check_availability_b2b", "create_b2b_booking", "generate_payment_link_b2b", "get_recent_bookings", "redeem_points", "update_booking_price_mode", "cancel_booking"];
-    const CUSTOMER_ONLY_TOOL_NAMES = ["get_customer_reservations"];
+    const CUSTOMER_ONLY_TOOL_NAMES = ["get_customer_reservations", "request_handoff"];
     const [{ data: agent }, { data: kb }, { data: allTools }] = await Promise.all([
       agentQuery,
       // KB filtrada por línea: entradas de esta línea + entradas 'todas' (compartidas)
@@ -169,7 +169,7 @@ Deno.serve(async (req) => {
             const toolBody = isB2BTool
               ? { action: t.name, aliado_id: b2b_context?.aliado_id, ...t.input }
               : isConfirmTool
-              ? { action: t.name, customer_telefono: confirm_context?.customer_telefono, customer_nombre: confirm_context?.customer_nombre, ...t.input }
+              ? { action: t.name, conversation_id, customer_telefono: confirm_context?.customer_telefono, customer_nombre: confirm_context?.customer_nombre, ...t.input }
               : { tenant_id, customer_telefono: confirm_context?.customer_telefono, ...t.input };
             const r = await fetch(`${SUPA_URL}/functions/v1/${toolDef.endpoint}`, {
               method: "POST",

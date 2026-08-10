@@ -107,7 +107,8 @@ export default function Conversations({ tenantId }) {
                   {r.channel_tipo && TAG(B.sky, r.channel_tipo)}
                   {r.metadata?.canal_tipo === "b2b" && TAG("#a88530", `🏢 ${r.metadata?.aliado_nombre || "B2B"}`)}
                   {r.metadata?.canal_tipo === "confirm" && TAG("#22c55e", "✅ Confirm")}
-                  {r.estado !== "live" && TAG(r.estado === "handoff" ? B.danger : B.warning, r.estado)}
+                  {r.estado === "handoff" && TAG(B.danger, `🙋 Handoff${r.metadata?.handoff?.tema ? ` · ${r.metadata.handoff.tema}` : ""}`)}
+                  {r.estado !== "live" && r.estado !== "handoff" && TAG(B.warning, r.estado)}
                   {r.fuente === "meta_ad" && TAG("#a78bfa", "Meta ad")}
                 </div>
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -123,6 +124,13 @@ export default function Conversations({ tenantId }) {
               <div>
                 <div style={{ fontSize: 14, fontWeight: 800, color: "#fff" }}>{selected.contact_nombre || selected.contact_id}</div>
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>{selected.contact_id} · {selected.channel_tipo}</div>
+                {selected.estado === "handoff" && selected.metadata?.handoff && (
+                  <div style={{ fontSize: 11, color: B.danger, marginTop: 4, padding: "4px 8px", background: B.danger + "22", borderRadius: 6, display: "inline-block" }}>
+                    🙋 Handoff · <b>{selected.metadata.handoff.tema}</b>
+                    {selected.metadata.handoff.motivo && ` — ${selected.metadata.handoff.motivo}`}
+                    {selected.metadata.handoff.reserva_id && ` (${selected.metadata.handoff.reserva_id})`}
+                  </div>
+                )}
               </div>
               <div style={{ display: "flex", gap: 6 }}>
                 {selected.metadata?.canal_tipo === "b2b" && selected.metadata?.aliado_id && (
