@@ -10,6 +10,7 @@ export default function Conversations({ tenantId }) {
   const [selected, setSelected] = useState(null);
   const [messages, setMessages] = useState([]);
   const [reply, setReply] = useState("");
+  const [customerReservas, setCustomerReservas] = useState([]);
 
   const load = useCallback(async () => {
     let q = supabase.from("ai_conversations").select("*").eq("tenant_id", tenantId).order("ultimo_mensaje_at", { ascending: false, nullsFirst: false }).limit(200);
@@ -26,9 +27,41 @@ export default function Conversations({ tenantId }) {
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    if (!selected) return setMessages([]);
+    if (!selected) { setMessages([]); setCustomerReservas([]); return; }
     supabase.from("ai_messages").select("*").eq("conversation_id", selected.id).order("created_at").then(({ data }) => setMessages(data || []));
+    // Cargar reservas activas del cliente (por últimos 10 dígitos del tel).
+    // Aplica principalmente a Confirm y B2B (donde contact_id es el WA), pero
+    // no hace daño para otros canales — simplemente no matchea.
+    const tel10 = String(selected.contact_id || "").replace(/\D/g, "").slice(-10);
+    if (tel10.length >= 7) {
+      const today = new Date().toISOString().slice(0, 10);
+      supabase.from("reservas")
+        .select("id, nombre, fecha, tipo, canal, pax, pax_a, pax_n, salida_id, nombre_embarcacion, estado, forma_pago, total, abono, saldo, aliado_id")
+        .neq("estado", "cancelado")
+        .gte("fecha", today)
+        .or(`telefono.ilike.%${tel10},contacto.ilike.%${tel10}`)
+        .order("fecha", { ascending: true })
+        .limit(10)
+        .then(({ data }) => setCustomerReservas(data || []));
+    } else {
+      setCustomerReservas([]);
+    }
   }, [selected]);
+
+  const abrirReserva = (reservaId) => {
+    window.dispatchEvent(new CustomEvent("atolon-navigate", { detail: { modulo: "reservas", reservaId } }));
+  };
+  const abrirAliadoB2B = (aliadoId) => {
+    window.dispatchEvent(new CustomEvent("atolon-navigate", { detail: { modulo: "b2b", aliadoId } }));
+  };
+
+  const fmtCOP = (n) => Number(n || 0).toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
+  const fmtFecha = (f) => {
+    if (!f) return "";
+    const d = String(f).slice(0, 10);
+    const [y, m, day] = d.split("-");
+    return `${day}/${m}/${y}`;
+  };
 
   const enviarReply = async () => {
     if (!reply.trim() || !selected) return;
@@ -92,10 +125,43 @@ export default function Conversations({ tenantId }) {
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>{selected.contact_id} · {selected.channel_tipo}</div>
               </div>
               <div style={{ display: "flex", gap: 6 }}>
+                {selected.metadata?.canal_tipo === "b2b" && selected.metadata?.aliado_id && (
+                  <button onClick={() => abrirAliadoB2B(selected.metadata.aliado_id)} style={BTN("#a88530")}>
+                    🏢 Abrir perfil B2B
+                  </button>
+                )}
                 <button onClick={async () => { await supabase.from("ai_conversations").update({ estado: "resolved" }).eq("id", selected.id); setSelected(null); load(); }} style={BTN(B.success)}>✓ Resolver</button>
                 <button onClick={async () => { await supabase.from("ai_conversations").update({ estado: "handoff" }).eq("id", selected.id); load(); }} style={BTN(B.warning)}>🙋 Handoff</button>
               </div>
             </div>
+
+            {/* Panel de reservas del cliente — aparece si tiene reservas activas */}
+            {customerReservas.length > 0 && (
+              <div style={{ background: B.navy, border: `1px solid ${B.navyLight}`, borderRadius: 8, padding: 10, marginBottom: 10 }}>
+                <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, fontWeight: 700 }}>
+                  ⚓ Reservas activas ({customerReservas.length})
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {customerReservas.map(r => (
+                    <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px", background: B.navyMid, borderRadius: 6 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {r.nombre} · {r.tipo}
+                        </div>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.6)" }}>
+                          {fmtFecha(r.fecha)} · {r.pax}p · {r.estado}
+                          {r.saldo > 0 && <span style={{ color: B.warning, marginLeft: 6 }}>· saldo {fmtCOP(r.saldo)}</span>}
+                        </div>
+                      </div>
+                      <button onClick={() => abrirReserva(r.id)}
+                        style={{ background: B.sky, color: B.navy, border: "none", borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                        Abrir →
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, padding: 8 }}>
               {messages.map(m => {
                 // Detectar media adjunta: contenido tiene formato "[IMAGEN|DOCUMENTO... — VER: <url>]"

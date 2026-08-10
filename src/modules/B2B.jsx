@@ -3936,6 +3936,17 @@ function AliadosList() {
 
   useEffect(() => { fetchAliados(); }, [fetchAliados]);
 
+  // Cross-module navigation: si otro módulo (Conversaciones) pidió abrir un
+  // aliado específico, aplicarlo cuando la lista termine de cargar.
+  useEffect(() => {
+    if (loading || !aliados.length) return;
+    const targetId = window.__openAliadoId;
+    if (!targetId) return;
+    const found = aliados.find(a => a.id === targetId);
+    if (found) setSelectedAliado(found);
+    window.__openAliadoId = null;
+  }, [loading, aliados]);
+
   if (selectedAliado) {
     const fresh = aliados.find(a => a.id === selectedAliado.id) || selectedAliado;
     return <FichaAliado aliado={fresh} onBack={() => setSelectedAliado(null)} onRefresh={fetchAliados} />;
