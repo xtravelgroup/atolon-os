@@ -9,9 +9,27 @@ export default function KnowledgeBase({ tenantId }) {
   const [items, setItems] = useState([]);
   const [filterLinea, setFilterLinea] = useState("all");
   const [showAdd, setShowAdd] = useState(null); // 'text' | 'url' | 'file'
+  const [editingId, setEditingId] = useState(null); // KB id cuando se está editando
   const [form, setForm] = useState({ nombre: "", contenido: "", url: "", scope: "tenant", linea: "todas" });
   const [file, setFile] = useState(null);
   const [saving, setSaving] = useState(false);
+
+  const abrirEditar = (r) => {
+    setEditingId(r.id);
+    setShowAdd(r.tipo); // reutiliza el modal
+    setForm({
+      nombre: r.nombre || "",
+      contenido: r.contenido || "",
+      url: r.url || "",
+      scope: r.scope || "tenant",
+      linea: r.linea || "todas",
+    });
+    setFile(null);
+  };
+  const cerrarModal = () => {
+    setShowAdd(null); setEditingId(null); setFile(null);
+    setForm({ nombre: "", contenido: "", url: "", scope: "tenant", linea: "todas" });
+  };
 
   const load = () => supabase.from("ai_knowledge_base").select("*").eq("tenant_id", tenantId).order("created_at", { ascending: false }).then(({ data }) => setItems(data || []));
   useEffect(() => { load(); }, [tenantId]);
@@ -21,24 +39,33 @@ export default function KnowledgeBase({ tenantId }) {
   const guardar = async () => {
     if (!form.nombre.trim()) { alert("Nombre requerido"); return; }
     setSaving(true);
-    let file_url = null;
+    let file_url;
     if (showAdd === "file" && file) {
       const ext = file.name.split(".").pop();
       const path = `kb/${tenantId}/${Date.now()}.${ext}`;
       const { error } = await supabase.storage.from("comprobantes").upload(path, file);
       if (!error) file_url = supabase.storage.from("comprobantes").getPublicUrl(path).data.publicUrl;
     }
-    const id = `KB-${Date.now()}`;
-    const row = {
-      id, tenant_id: tenantId, nombre: form.nombre.trim(), tipo: showAdd, scope: form.scope,
+    const patch = {
+      nombre: form.nombre.trim(),
+      scope: form.scope,
       linea: form.linea || "todas",
       contenido: showAdd === "text" ? form.contenido : null,
       url: showAdd === "url" ? form.url : null,
-      file_url,
       tokens: showAdd === "text" ? Math.ceil((form.contenido || "").length / 4) : 0,
     };
-    await supabase.from("ai_knowledge_base").insert(row);
-    setShowAdd(null); setForm({ nombre: "", contenido: "", url: "", scope: "tenant", linea: "todas" }); setFile(null);
+    // file_url solo se sobreescribe si el usuario subió un archivo nuevo
+    if (file_url !== undefined) patch.file_url = file_url;
+
+    if (editingId) {
+      const { error } = await supabase.from("ai_knowledge_base").update(patch).eq("id", editingId);
+      if (error) { alert("Error al actualizar: " + error.message); setSaving(false); return; }
+    } else {
+      const row = { id: `KB-${Date.now()}`, tenant_id: tenantId, tipo: showAdd, ...patch, file_url: file_url || null };
+      const { error } = await supabase.from("ai_knowledge_base").insert(row);
+      if (error) { alert("Error al crear: " + error.message); setSaving(false); return; }
+    }
+    cerrarModal();
     setSaving(false); load();
   };
 
@@ -111,8 +138,9 @@ export default function KnowledgeBase({ tenantId }) {
                   <td>{TAG(r.scope === "global" ? "#a78bfa" : B.sand, r.scope)}</td>
                   <td>{r.tokens?.toLocaleString("es-CO") || 0}</td>
                   <td><input type="checkbox" checked={r.activo} onChange={() => toggle(r)} /></td>
-                  <td style={{ textAlign: "right" }}>
-                    <button onClick={() => borrar(r)} style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>🗑</button>
+                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                    <button onClick={() => abrirEditar(r)} style={{ background: "transparent", border: "none", color: B.sky, cursor: "pointer", fontSize: 14, marginRight: 4 }} title="Editar">✏️</button>
+                    <button onClick={() => borrar(r)} style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }} title="Eliminar">🗑</button>
                   </td>
                 </tr>
                 );
@@ -122,11 +150,11 @@ export default function KnowledgeBase({ tenantId }) {
         </div>
       )}
       {showAdd && (
-        <div onClick={e => e.target === e.currentTarget && setShowAdd(null)}
+        <div onClick={e => e.target === e.currentTarget && cerrarModal()}
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 100 }}>
-          <div style={{ background: B.navyMid, borderRadius: 14, padding: 22, maxWidth: 640, width: "100%" }}>
+          <div style={{ background: B.navyMid, borderRadius: 14, padding: 22, maxWidth: 720, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
             <div style={{ fontSize: 18, fontWeight: 800, color: "#fff", marginBottom: 14 }}>
-              Agregar {showAdd === "text" ? "texto" : showAdd === "url" ? "URL" : "archivo"} a la KB
+              {editingId ? "Editar" : "Agregar"} {showAdd === "text" ? "texto" : showAdd === "url" ? "URL" : "archivo"}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div>
@@ -135,8 +163,8 @@ export default function KnowledgeBase({ tenantId }) {
               </div>
               {showAdd === "text" && (
                 <div>
-                  <label style={LS}>Contenido</label>
-                  <textarea value={form.contenido} onChange={e => setForm({ ...form, contenido: e.target.value })} rows={10} style={{ ...IS, fontFamily: "monospace" }} />
+                  <label style={LS}>Contenido {editingId && <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400 }}>· ~{Math.ceil((form.contenido || "").length / 4).toLocaleString("es-CO")} tokens</span>}</label>
+                  <textarea value={form.contenido} onChange={e => setForm({ ...form, contenido: e.target.value })} rows={18} style={{ ...IS, fontFamily: "monospace", lineHeight: 1.5 }} />
                 </div>
               )}
               {showAdd === "url" && (
@@ -147,7 +175,7 @@ export default function KnowledgeBase({ tenantId }) {
               )}
               {showAdd === "file" && (
                 <div>
-                  <label style={LS}>Archivo (PDF/DOCX/TXT)</label>
+                  <label style={LS}>Archivo (PDF/DOCX/TXT) {editingId && <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400 }}>· deja vacío para mantener el actual</span>}</label>
                   <input type="file" accept=".pdf,.txt,.md,.docx" onChange={e => setFile(e.target.files?.[0])} style={IS} />
                 </div>
               )}
@@ -171,8 +199,8 @@ export default function KnowledgeBase({ tenantId }) {
               </div>
             </div>
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
-              <button onClick={() => setShowAdd(null)} style={BTN(B.navyLight)}>Cancelar</button>
-              <button onClick={guardar} disabled={saving} style={BTN(B.success)}>{saving ? "…" : "💾 Guardar"}</button>
+              <button onClick={cerrarModal} style={BTN(B.navyLight)}>Cancelar</button>
+              <button onClick={guardar} disabled={saving} style={BTN(B.success)}>{saving ? "…" : (editingId ? "💾 Actualizar" : "💾 Guardar")}</button>
             </div>
           </div>
         </div>
