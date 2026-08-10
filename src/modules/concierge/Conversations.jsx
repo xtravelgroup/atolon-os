@@ -32,15 +32,22 @@ export default function Conversations({ tenantId }) {
 
   const enviarReply = async () => {
     if (!reply.trim() || !selected) return;
-    const id = `MSG-${Date.now()}`;
-    await supabase.from("ai_messages").insert({
-      id, conversation_id: selected.id, tenant_id: tenantId,
-      rol: "assistant", contenido: reply, origen: "human",
+    const texto = reply;
+    setReply("");
+    const { data: { user } } = await supabase.auth.getUser();
+    // Llamar al edge function que ADEMÁS de guardar el mensaje lo envía por
+    // WhatsApp al cliente vía Meta Graph API.
+    const { data, error } = await supabase.functions.invoke("concierge-send-manual", {
+      body: {
+        conversation_id: selected.id,
+        contenido: texto,
+        autor_email: user?.email || null,
+      },
     });
-    await supabase.from("ai_conversations").update({
-      estado: "live", ultimo_mensaje: reply, ultimo_mensaje_at: new Date().toISOString(),
-    }).eq("id", selected.id);
-    setReply(""); load();
+    if (error || data?.ok === false) {
+      alert("⚠ El mensaje se guardó pero NO llegó por WhatsApp: " + (data?.error || error?.message || "error desconocido"));
+    }
+    load();
     supabase.from("ai_messages").select("*").eq("conversation_id", selected.id).order("created_at").then(({ data }) => setMessages(data || []));
   };
 
