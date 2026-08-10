@@ -37,18 +37,30 @@ Deno.serve(async (req) => {
 
     if (action === "get_customer_reservations") {
       const tel = tel10(customer_telefono || args.telefono || "");
-      if (!tel || tel.length < 7) {
-        return json({ ok: false, error: "customer_telefono requerido (mínimo 7 dígitos)", reservas: [] });
-      }
-      // Buscar reservas donde el teléfono termine en esos 10 dígitos, no canceladas
+      // Opcional: el cliente pasó un código de reserva (R-xxx). Si lo hay,
+      // priorizamos búsqueda por ID.
+      const reservaIdArg = String(args.reserva_id || "").trim();
+      const nombreArg = String(args.nombre || "").trim();
+
       const today = new Date().toISOString().slice(0, 10);
-      const { data, error } = await supa.from("reservas")
-        .select("id, nombre, fecha, tipo, canal, salida_id, hora_llegada, nombre_embarcacion, pax, pax_a, pax_n, total, abono, saldo, estado, forma_pago, notas_club, aliado_id")
+      let q = supa.from("reservas")
+        .select("id, nombre, fecha, tipo, canal, salida_id, hora_llegada, nombre_embarcacion, pax, pax_a, pax_n, total, abono, saldo, estado, forma_pago, notas_club, aliado_id, telefono")
         .neq("estado", "cancelado")
-        .gte("fecha", today)
-        .or(`telefono.ilike.%${tel},contacto.ilike.%${tel}`)
         .order("fecha", { ascending: true })
         .limit(20);
+
+      if (reservaIdArg) {
+        q = q.eq("id", reservaIdArg);
+      } else if (nombreArg && nombreArg.length >= 3) {
+        // Búsqueda por nombre + (opcional) teléfono. Solo reservas futuras/hoy.
+        q = q.gte("fecha", today).ilike("nombre", `%${nombreArg}%`);
+      } else if (tel && tel.length >= 7) {
+        q = q.gte("fecha", today).or(`telefono.ilike.%${tel},contacto.ilike.%${tel}`);
+      } else {
+        return json({ ok: false, error: "Requiero customer_telefono, o reserva_id (R-xxx), o nombre para buscar", reservas: [] });
+      }
+
+      const { data, error } = await q;
       if (error) return json({ ok: false, error: error.message, reservas: [] });
 
       // Enriquecer con hora de salida

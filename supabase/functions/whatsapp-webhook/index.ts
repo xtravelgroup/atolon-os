@@ -210,12 +210,16 @@ Deno.serve(async (req: Request) => {
         return jsonResp({ forwarded: "b2b", phone_number_id: firstPhoneId });
       }
       if (canalTipo === "confirm") {
+        // Forward completo al Concierge (Sofía atiende). NO seguir con el
+        // flujo Tatiana local — antes lo dejábamos correr para logging, pero
+        // Tatiana disparaba una segunda respuesta y el cliente veía DOS
+        // mensajes del bot por cada uno suyo.
         fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/concierge-webhook-whatsapp`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(body),
         }).catch(e => console.warn("[whatsapp-webhook → concierge Confirm] forward error:", e));
-        // NO return — continuar con el flujo local Tatiana / wa_mensajes
+        return jsonResp({ forwarded: "confirm", phone_number_id: firstPhoneId });
       }
     }
 
