@@ -145,7 +145,40 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
     horas_estribor: "",
     horas_centro: "", // Castillete tiene 1 motor central
     boca_chica: false, // ← cuando viene de Boca Chica no cuenta como viaje
+    aliado_id: reserva?.aliado_id || "",
   });
+
+  // Comisionista (B2B): solo aplica a after_island/restaurante/a_consumo, no a lanchas Atolón
+  const [showComisionista, setShowComisionista] = useState(!!reserva?.aliado_id);
+  const [aliados, setAliados] = useState([]);
+  const [aliadoSearch, setAliadoSearch] = useState("");
+  const [showNuevoAliado, setShowNuevoAliado] = useState(false);
+  const [nuevoAliado, setNuevoAliado] = useState({ nombre: "", tel: "", email: "", tipo: "Agencia" });
+  useEffect(() => {
+    if (!supabase || !showComisionista || aliados.length > 0) return;
+    supabase.from("aliados_b2b").select("id, nombre, tipo, tel, comision").eq("estado", "activo").order("nombre")
+      .then(({ data }) => setAliados(data || []));
+  }, [showComisionista, aliados.length]);
+  const crearAliado = async () => {
+    if (!nuevoAliado.nombre.trim()) { alert("Nombre requerido"); return; }
+    const id = `B2B-${Date.now()}`;
+    const { error } = await supabase.from("aliados_b2b").insert({
+      id, nombre: nuevoAliado.nombre.trim(), tipo: nuevoAliado.tipo,
+      tel: nuevoAliado.tel.trim() || null, email: nuevoAliado.email.trim() || null,
+      estado: "activo", comision: 0,
+    });
+    if (error) { alert("Error al crear: " + error.message); return; }
+    setF(p => ({ ...p, aliado_id: id }));
+    setAliados(p => [...p, { id, nombre: nuevoAliado.nombre.trim(), tipo: nuevoAliado.tipo, tel: nuevoAliado.tel, comision: 0 }]);
+    setShowNuevoAliado(false);
+    setNuevoAliado({ nombre: "", tel: "", email: "", tipo: "Agencia" });
+  };
+  const aliadosFiltrados = aliados.filter(a => {
+    if (!aliadoSearch.trim()) return true;
+    const q = aliadoSearch.toLowerCase();
+    return a.nombre.toLowerCase().includes(q) || (a.tel || "").includes(q);
+  });
+  const aplicaComisionista = ["after_island", "restaurante", "a_consumo"].includes(tipoSeleccionado) || esWalkin;
 
   const [fotoFile, setFotoFile]       = useState(null);
   const [fotoPreview, setFotoPreview] = useState(null);
@@ -289,6 +322,7 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
       costo_operativo: costoOperativo,
       boca_chica: !!f.boca_chica,
       excluir_kpis: excluirKpisAuto,
+      aliado_id: f.aliado_id || null,
     };
     // Solo incluir foto_url si está disponible (columna puede no existir aún)
     if (foto_url) payload.foto_url = foto_url;
@@ -441,6 +475,69 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
           {esLancha && !salidaInfo && (
             <button onClick={() => setPaso(0)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 12, cursor: "pointer", marginBottom: 14, padding: 0 }}>← Ver lanchas programadas</button>
           )}
+
+        {aplicaComisionista && (
+          <div style={{ marginBottom: 14, padding: 12, borderRadius: 10, background: showComisionista ? B.sand + "18" : "transparent", border: `1px solid ${showComisionista ? B.sand + "55" : B.navyLight}` }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, color: showComisionista ? B.sand : "rgba(255,255,255,0.7)", fontWeight: 600 }}>
+              <input type="checkbox" checked={showComisionista} onChange={e => { setShowComisionista(e.target.checked); if (!e.target.checked) s("aliado_id", ""); }} />
+              🤝 Tiene comisionista / agencia
+            </label>
+            {showComisionista && (
+              <div style={{ marginTop: 10 }}>
+                {f.aliado_id ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: B.navyMid, borderRadius: 8 }}>
+                    <span style={{ flex: 1, fontSize: 13, color: "#fff", fontWeight: 600 }}>
+                      🏢 {aliados.find(a => a.id === f.aliado_id)?.nombre || f.aliado_id}
+                    </span>
+                    <button type="button" onClick={() => s("aliado_id", "")} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 12 }}>Cambiar</button>
+                  </div>
+                ) : showNuevoAliado ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <input value={nuevoAliado.nombre} onChange={e => setNuevoAliado(p => ({ ...p, nombre: e.target.value }))} placeholder="Nombre del comisionista/agencia" style={IS} />
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <input value={nuevoAliado.tel} onChange={e => setNuevoAliado(p => ({ ...p, tel: e.target.value }))} placeholder="Teléfono" style={IS} />
+                      <select value={nuevoAliado.tipo} onChange={e => setNuevoAliado(p => ({ ...p, tipo: e.target.value }))} style={IS}>
+                        <option value="Agencia">Agencia</option>
+                        <option value="Freelance">Freelance</option>
+                        <option value="Hotel">Hotel</option>
+                        <option value="Restaurante">Restaurante</option>
+                        <option value="Otro">Otro</option>
+                      </select>
+                    </div>
+                    <input value={nuevoAliado.email} onChange={e => setNuevoAliado(p => ({ ...p, email: e.target.value }))} placeholder="Email (opcional)" style={IS} />
+                    <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                      <button type="button" onClick={() => { setShowNuevoAliado(false); setNuevoAliado({ nombre: "", tel: "", email: "", tipo: "Agencia" }); }} style={{ background: "none", border: `1px solid ${B.navyLight}`, color: "rgba(255,255,255,0.6)", borderRadius: 6, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>Cancelar</button>
+                      <button type="button" onClick={crearAliado} style={{ background: B.success, color: "#fff", border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Crear</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <input value={aliadoSearch} onChange={e => setAliadoSearch(e.target.value)} placeholder="🔎 Buscar comisionista por nombre o tel…" style={{ ...IS, marginBottom: 6 }} />
+                    <div style={{ maxHeight: 160, overflowY: "auto", background: B.navyMid, borderRadius: 6, border: `1px solid ${B.navyLight}` }}>
+                      {aliadosFiltrados.length === 0 ? (
+                        <div style={{ padding: 12, textAlign: "center", color: "rgba(255,255,255,0.4)", fontSize: 11 }}>Sin resultados</div>
+                      ) : aliadosFiltrados.slice(0, 20).map(a => (
+                        <button key={a.id} type="button" onClick={() => s("aliado_id", a.id)}
+                          style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", background: "transparent", border: "none", borderBottom: `1px solid ${B.navyLight}`, color: "#fff", cursor: "pointer", fontSize: 12 }}
+                          onMouseEnter={e => e.currentTarget.style.background = B.navy}
+                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                          <div style={{ fontWeight: 600 }}>{a.nombre}</div>
+                          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+                            {a.tipo}{a.tel ? ` · ${a.tel}` : ""}{a.comision ? ` · ${a.comision}% comisión` : ""}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                    <button type="button" onClick={() => setShowNuevoAliado(true)}
+                      style={{ marginTop: 8, width: "100%", padding: "8px", background: B.sand + "22", color: B.sand, border: `1px dashed ${B.sand + "55"}`, borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                      + Crear nuevo comisionista
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
           <div style={{ gridColumn: "1 / -1", marginBottom: 14 }}>
