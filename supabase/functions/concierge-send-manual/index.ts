@@ -91,7 +91,10 @@ Deno.serve(async (req) => {
       ultimo_mensaje_at: new Date().toISOString(),
     }).eq("id", conversation_id);
 
-    if (sendError) return json({ ok: false, error: sendError, saved_locally: true }, 502);
+    // SIEMPRE 200: si devolvemos 502, supabase.functions.invoke() del cliente
+    // pierde el body y solo ve "non-2xx". Con 200 + ok:false el UI lee la
+    // razón exacta.
+    if (sendError) return json({ ok: false, error: sendError, saved_locally: true });
     return json({ ok: true, provider_msg_id: providerMsgId });
   } catch (e: any) {
     return json({ ok: false, error: e.message || String(e) }, 500);
