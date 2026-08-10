@@ -43,7 +43,19 @@ Deno.serve(async (req) => {
       const { data: ch } = await supa.from("ai_channels").select("config")
         .eq("id", conv.channel_id).maybeSingle();
       const phoneNumberId = ch?.config?.phone_number_id;
-      const accessToken = ch?.config?.access_token || Deno.env.get("META_WHATSAPP_TOKEN") || "";
+      // Token: primero el del canal, luego cualquier canal activo de la misma
+      // WABA (todos los números de una WABA comparten access_token de Meta),
+      // finalmente el env como último recurso.
+      let accessToken: string = ch?.config?.access_token || "";
+      if (!accessToken && ch?.config?.waba_id) {
+        const { data: sib } = await supa.from("ai_channels")
+          .select("config").eq("tipo", "whatsapp").eq("activo", true)
+          .filter("config->>waba_id", "eq", ch.config.waba_id)
+          .not("config->>access_token", "is", null)
+          .limit(1).maybeSingle();
+        if (sib?.config?.access_token) accessToken = sib.config.access_token;
+      }
+      if (!accessToken) accessToken = Deno.env.get("META_WHATSAPP_TOKEN") || "";
       if (!phoneNumberId) sendError = "Canal sin phone_number_id configurado";
       else if (!accessToken) sendError = "Sin access_token (canal y env vacíos)";
       else {

@@ -199,10 +199,19 @@ Deno.serve(async (req) => {
     const reply = turn?.reply;
     if (!reply) return new Response("no reply");
 
-    // 7) Enviar respuesta por WA Cloud API — usa token del canal, o el del env
-    // (los canales de la misma WABA pueden compartir token; el Confirm no
-    // tiene token propio guardado, cae al env META_WHATSAPP_TOKEN)
-    const sendToken = accessToken || Deno.env.get("META_WHATSAPP_TOKEN") || "";
+    // 7) Enviar respuesta por WA Cloud API — usa token del canal; si no hay,
+    // busca en otro canal activo de la misma WABA (comparten token de Meta);
+    // último recurso, el env.
+    let sendToken: string = accessToken || "";
+    if (!sendToken && channel.config?.waba_id) {
+      const { data: sib } = await supa.from("ai_channels")
+        .select("config").eq("tipo", "whatsapp").eq("activo", true)
+        .filter("config->>waba_id", "eq", channel.config.waba_id)
+        .not("config->>access_token", "is", null)
+        .limit(1).maybeSingle();
+      if (sib?.config?.access_token) sendToken = sib.config.access_token;
+    }
+    if (!sendToken) sendToken = Deno.env.get("META_WHATSAPP_TOKEN") || "";
     if (sendToken) {
       await fetch(`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`, {
         method: "POST",
