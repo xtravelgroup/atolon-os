@@ -2315,6 +2315,244 @@ serve(async (req) => {
       return json({ ok: true, nota, encontrados: found.length, movimientos: found });
     }
 
+    // GET /loggro-sync/consumo-agencia-rango?from=YYYY-MM-DD&to=YYYY-MM-DD&aliado_id=B2B-xxx
+    // Descarga /orders paginadas en el rango, cruza con reservas del aliado y
+    // devuelve el consumo AyB atribuible (match por código de reserva en
+    // client.name / groupName / notes / description, o palabra clave del
+    // nombre del aliado — ej "dorado").
+    if (req.method === "GET" && path === "/consumo-agencia-rango") {
+      const from = url.searchParams.get("from");
+      const to   = url.searchParams.get("to");
+      const aliado_id = url.searchParams.get("aliado_id");
+      if (!from || !to || !aliado_id) return json({ error: "params from, to y aliado_id requeridos" }, 400);
+
+      const _sbUrl = Deno.env.get("SUPABASE_URL")!;
+      const _sbKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      const supaResp = await fetch(`${_sbUrl}/rest/v1/aliados_b2b?id=eq.${aliado_id}&select=nombre`, {
+        headers: { apikey: _sbKey, Authorization: `Bearer ${_sbKey}` },
+      });
+      const aliadoData = await supaResp.json();
+      const aliadoNombre = aliadoData?.[0]?.nombre || "";
+      if (!aliadoNombre) return json({ error: "aliado no encontrado" }, 404);
+
+      // Reservas del aliado que se ejecutaron en el rango — extraer códigos
+      const rRes = await fetch(`${_sbUrl}/rest/v1/reservas?aliado_id=eq.${aliado_id}&fecha=gte.${from}&fecha=lte.${to}&estado=neq.cancelado&select=id,nombre,fecha,pax,tipo`, {
+        headers: { apikey: _sbKey, Authorization: `Bearer ${_sbKey}` },
+      });
+      const reservas: any[] = await rRes.json();
+      const ids = reservas.map((r: any) => String(r.id));
+      const codigosReserva = new Set<string>(ids);
+      const nombresReserva = new Set<string>(reservas.map((r: any) => String(r.nombre || "").toLowerCase().trim()).filter(Boolean));
+      // Extraer prefijos alfanuméricos (ej. DE4862 del nombre "DE4862 Grupo con sabor…")
+      const prefijos = new Set<string>();
+      for (const n of nombresReserva) {
+        const m = n.match(/\b([A-Z]{2,4}\d{3,6})\b/i);
+        if (m) prefijos.add(m[1].toUpperCase());
+      }
+      const aliadoKeyword = aliadoNombre.toLowerCase().split(/\s+/)[0]; // "dorado"
+
+      const matchOrder = (o: any): { via: string; code: string } | null => {
+        const clientName = String(o?.client?.name || o?.clientName || "").toLowerCase();
+        const groupName  = String(o?.groupName || "").toLowerCase();
+        const tableName  = String(o?.table?.name || o?.tableName || "").toLowerCase();
+        const notes      = Array.isArray(o?.notes) ? o.notes.join(" ").toLowerCase() : String(o?.notes || "").toLowerCase();
+        const orderLinesNotes = Array.isArray(o?.orderLines)
+          ? o.orderLines.map((l: any) => Array.isArray(l?.notes) ? l.notes.join(" ") : String(l?.notes || "")).join(" ").toLowerCase()
+          : "";
+        const description = String(o?.description || "").toLowerCase();
+        const haystack = `${clientName} ${groupName} ${tableName} ${notes} ${orderLinesNotes} ${description}`;
+
+        // Match por reserva_id atolón
+        for (const rid of ids) {
+          if (haystack.includes(rid.toLowerCase())) return { via: "reserva_id", code: rid };
+        }
+        // Match por prefijo (DE####)
+        for (const pref of prefijos) {
+          if (haystack.includes(pref.toLowerCase())) return { via: "prefijo", code: pref };
+        }
+        // Match por nombre completo
+        for (const nom of nombresReserva) {
+          if (nom.length >= 5 && haystack.includes(nom)) return { via: "nombre", code: nom };
+        }
+        // Fallback: palabra clave del aliado
+        if (aliadoKeyword.length >= 4 && haystack.includes(aliadoKeyword)) return { via: "aliado_keyword", code: aliadoKeyword };
+        return null;
+      };
+
+      const COTZ = -5 * 3600 * 1000;
+      const dayOf = (ts: string) => new Date(new Date(ts).getTime() + COTZ).toISOString().slice(0, 10);
+
+      const pageSize = 100;
+      const MAX_PAGES = 400;
+      const matched: any[] = [];
+      const seen = new Set<string>();
+      let pagesScanned = 0;
+      let earliestDay: string | null = null;
+
+      for (let p = 0; p < MAX_PAGES; p++) {
+        let arr: any[] = [];
+        try {
+          const d: any = await loggroGet(`/orders?pagination=true&limit=${pageSize}&page=${p}&includeDeleted=false`);
+          arr = d?.data || (Array.isArray(d) ? d : []) || [];
+        } catch (e) {
+          return json({ ok: false, error: `Loggro /orders page ${p}: ${(e as Error).message}`, partial: matched.length }, 503);
+        }
+        pagesScanned++;
+        if (arr.length === 0) break;
+        for (const o of arr) {
+          if (!o?._id || seen.has(o._id)) continue;
+          seen.add(o._id);
+          const ts = o.paidOn || o.closedOn || o.createdOn;
+          if (!ts) continue;
+          const d = dayOf(ts);
+          if (!earliestDay || d < earliestDay) earliestDay = d;
+          if (d < from || d > to) continue;
+          if (o?.deleted === true) continue;
+          const m = matchOrder(o);
+          if (!m) continue;
+          matched.push({
+            id: o._id, fecha: d,
+            mesa: String(o?.table?.name || o?.tableName || ""),
+            total: Number(o.totalAmount || o.total || 0),
+            status: o.status || null,
+            client_name: o?.client?.name || null,
+            group_name: o?.groupName || null,
+            match_via: m.via, match_code: m.code,
+          });
+        }
+        const allOlder = arr.every((o: any) => {
+          const ts = o.paidOn || o.closedOn || o.createdOn;
+          return ts && dayOf(ts) < from;
+        });
+        if (allOlder && p > 2) break;
+      }
+
+      const porReserva: Record<string, { total: number; ordenes: number; nombre?: string; fecha?: string; pax?: number }> = {};
+      const porMes: Record<string, { total: number; ordenes: number }> = {};
+      let grand = 0;
+      for (const o of matched) {
+        grand += o.total;
+        const m = o.fecha.slice(0, 7);
+        porMes[m] = porMes[m] || { total: 0, ordenes: 0 };
+        porMes[m].total += o.total; porMes[m].ordenes += 1;
+        const key = o.match_code;
+        porReserva[key] = porReserva[key] || { total: 0, ordenes: 0 };
+        porReserva[key].total += o.total; porReserva[key].ordenes += 1;
+        const r = reservas.find((x: any) => x.id === key || String(x.nombre || "").toUpperCase().includes(key.toUpperCase()));
+        if (r) {
+          porReserva[key].nombre = r.nombre;
+          porReserva[key].fecha = r.fecha;
+          porReserva[key].pax = r.pax;
+        }
+      }
+
+      return json({
+        ok: true,
+        from, to, aliado_id, aliado_nombre: aliadoNombre,
+        reservas_en_rango: reservas.length,
+        pax_totales: reservas.reduce((s: number, r: any) => s + (r.pax || 0), 0),
+        prefijos_detectados: [...prefijos],
+        pages_scanned: pagesScanned,
+        earliest_order_day_seen: earliestDay,
+        total_ordenes_match: matched.length,
+        total_cop: grand,
+        por_mes: porMes,
+        por_reserva: porReserva,
+        muestra: matched.slice(0, 15),
+      });
+    }
+
+    // GET /loggro-sync/consumo-habitaciones-rango?from=YYYY-MM-DD&to=YYYY-MM-DD
+    // Descarga /orders paginadas, filtra por table.name que empieza con "HB"
+    // (mesa asignada a huésped de habitación) y agrupa por mesa/día/mes con
+    // totales.
+    if (req.method === "GET" && path === "/consumo-habitaciones-rango") {
+      const from = url.searchParams.get("from");
+      const to   = url.searchParams.get("to");
+      if (!from || !to) return json({ error: "params from y to requeridos (YYYY-MM-DD)" }, 400);
+
+      const COTZ = -5 * 3600 * 1000;
+      const dayOf = (ts: string) => new Date(new Date(ts).getTime() + COTZ).toISOString().slice(0, 10);
+      const monthOf = (d: string) => d.slice(0, 7);
+
+      const pageSize = 100;
+      const MAX_PAGES = 400; // ~40k orders máx
+      const allHB: any[] = [];
+      const seen = new Set<string>();
+      let earliestDay: string | null = null;
+      let pagesScanned = 0;
+
+      for (let p = 0; p < MAX_PAGES; p++) {
+        let arr: any[] = [];
+        try {
+          const d: any = await loggroGet(`/orders?pagination=true&limit=${pageSize}&page=${p}&includeDeleted=false`);
+          arr = d?.data || (Array.isArray(d) ? d : []) || [];
+        } catch (e) {
+          return json({ ok: false, error: `Loggro /orders page ${p}: ${(e as Error).message}`, partial: allHB.length }, 503);
+        }
+        pagesScanned++;
+        if (arr.length === 0) break;
+        for (const o of arr) {
+          if (!o?._id || seen.has(o._id)) continue;
+          seen.add(o._id);
+          const ts = o.paidOn || o.closedOn || o.createdOn;
+          if (!ts) continue;
+          const d = dayOf(ts);
+          if (!earliestDay || d < earliestDay) earliestDay = d;
+          if (d < from || d > to) continue;
+          const tableName = String(o?.table?.name || o?.tableName || "").trim();
+          if (!/^HB/i.test(tableName)) continue;
+          if (o?.deleted === true) continue;
+          allHB.push({
+            id: o._id,
+            fecha: d,
+            mesa: tableName,
+            total: Number(o.totalAmount || o.total || 0),
+            subtotal: Number(o.subTotal || o.subtotal || 0),
+            status: o.status || null,
+            client_name: o?.client?.name || o?.clientName || null,
+            items: (o.orderLines || o.items || []).length,
+          });
+        }
+        // Corte temprano: si la página completa ya viene con órdenes MUY
+        // anteriores al 'from', asumimos que ya no vamos a encontrar más.
+        const allOlder = arr.every((o: any) => {
+          const ts = o.paidOn || o.closedOn || o.createdOn;
+          return ts && dayOf(ts) < from;
+        });
+        if (allOlder && p > 2) break;
+      }
+
+      const totalMes: Record<string, { total: number; ordenes: number }> = {};
+      const totalMesa: Record<string, { total: number; ordenes: number; ultimo: string | null }> = {};
+      const totalDia: Record<string, { total: number; ordenes: number }> = {};
+      let grand = 0;
+      for (const o of allHB) {
+        grand += o.total;
+        const m = monthOf(o.fecha);
+        totalMes[m] = totalMes[m] || { total: 0, ordenes: 0 };
+        totalMes[m].total += o.total; totalMes[m].ordenes += 1;
+        totalMesa[o.mesa] = totalMesa[o.mesa] || { total: 0, ordenes: 0, ultimo: null };
+        totalMesa[o.mesa].total += o.total; totalMesa[o.mesa].ordenes += 1;
+        if (!totalMesa[o.mesa].ultimo || o.fecha > totalMesa[o.mesa].ultimo) totalMesa[o.mesa].ultimo = o.fecha;
+        totalDia[o.fecha] = totalDia[o.fecha] || { total: 0, ordenes: 0 };
+        totalDia[o.fecha].total += o.total; totalDia[o.fecha].ordenes += 1;
+      }
+
+      return json({
+        ok: true,
+        from, to,
+        pages_scanned: pagesScanned,
+        earliest_order_day_seen: earliestDay,
+        total_ordenes_hb: allHB.length,
+        total_cop: grand,
+        por_mes: totalMes,
+        por_mesa: Object.fromEntries(Object.entries(totalMesa).sort((a, b) => b[1].total - a[1].total)),
+        por_dia: totalDia,
+        muestra: allHB.slice(0, 10),
+      });
+    }
+
     // GET /loggro-sync/movimientos-inventario-rango?from=YYYY-MM-DD&to=YYYY-MM-DD
     // Descarga TODOS los movimientos de inventario de Loggro en el rango y los
     // agrupa por (tipo de movimiento, ingrediente). Es lo que el contador
