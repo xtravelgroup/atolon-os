@@ -88,7 +88,7 @@ Deno.serve(async (req) => {
           hora_llegada_bodeguita: sinLanchaAtolon ? null : restar30(horaSalida),
           punto_encuentro: sinLanchaAtolon
             ? `Llegas en tu propia embarcación (${r.nombre_embarcacion}) directamente al muelle de Atolón`
-            : "Muelle de la Bodeguita, Cartagena — Puerta 4 (llegar 30 min antes de la hora de salida)",
+            : "Muelle de la Bodeguita, Cartagena — Puerta 1 (llegar 30 min antes de la hora de salida)",
           embarcacion: r.nombre_embarcacion || sal?.nombre || null,
           estado: r.estado,
           forma_pago: r.forma_pago,
@@ -105,7 +105,7 @@ Deno.serve(async (req) => {
         count: reservas.length,
         reservas,
         info_general: {
-          muelle: "Muelle de la Bodeguita, Cartagena — Puerta 4",
+          muelle: "Muelle de la Bodeguita, Cartagena — Puerta 1",
           anticipacion_min: 30,
           impuesto_muelle: "NO incluido en el pasadía — se paga en la taquilla de la Bodeguita antes de abordar",
           duracion_trayecto_min: 15,

@@ -83,14 +83,14 @@ Deno.serve(async (req) => {
       "- Dar información general de Atolón (horarios, ubicación, servicios, políticas — usa la KB)",
       "- Ayudar a crear una NUEVA reserva usando `check_disponibilidad_pasadia`, `get_precios_pasadias` y `crear_reserva_pendiente` (siempre confirma con el cliente ANTES de crear)",
       "\nINFORMACIÓN LOGÍSTICA IMPORTANTE (siempre disponible para dar al cliente):",
-      "- **Punto de encuentro**: Muelle de la Bodeguita, Cartagena — Puerta 4",
+      "- **Punto de encuentro**: Muelle de la Bodeguita, Cartagena — Puerta 1",
       "- **Hora de llegada**: 30 minutos ANTES de la hora de salida de la lancha (para chequeo y abordar sin apuro)",
-      "- **Impuesto de muelle**: NO está incluido en el pasadía. Se paga directamente en la taquilla de la Bodeguita antes de abordar (~$21,000 COP por persona adulta, tarifa oficial del muelle)",
+      "- **Impuesto de muelle**: NO está incluido en el pasadía. Se paga directamente en la taquilla de la Bodeguita antes de abordar ($18,000 COP por persona adulta, tarifa oficial del muelle)",
       "- **Trayecto en lancha**: ~15 minutos desde La Bodeguita hasta Atolón",
       "- **After Island / Sin embarcación Atolón**: si el cliente llega en su propia embarcación, va directamente al muelle de Atolón (no pasa por Bodeguita)",
       "\nLa tool `get_customer_reservations` ya calcula la hora de llegada a la Bodeguita (`hora_llegada_bodeguita`) y el `punto_encuentro` correcto para cada reserva. Úsalo tal cual — NO inventes horas.",
       "\nEjemplo de respuesta ideal cuando el cliente pregunta 'a qué hora llegamos':",
-      "'Tu reserva de VIP Pass es mañana. La lancha sale a las 10:00 AM desde el Muelle de la Bodeguita (Puerta 4, Cartagena). Debes estar allí a las 9:30 AM para chequeo. Recuerda que el impuesto de muelle (~$21,000 por adulto) se paga aparte en la taquilla.'",
+      "'Tu reserva de VIP Pass es mañana. La lancha sale a las 10:00 AM desde el Muelle de la Bodeguita (Puerta 1, Cartagena). Debes estar allí a las 9:30 AM para chequeo. Recuerda que el impuesto de muelle ($18,000 por adulto) se paga aparte en la taquilla.'",
     ].filter(Boolean).join("\n") : "";
     const system = [
       `HOY es ${hoy} (${hoyISO}). Cuando el cliente diga fechas relativas ("mañana", "el sábado", "el 15") interpreta con base en HOY. Nunca uses años pasados.\n\n`,
