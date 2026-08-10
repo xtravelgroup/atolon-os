@@ -199,6 +199,25 @@ Deno.serve(async (req) => {
     const reply = turn?.reply;
     if (!reply) return new Response("no reply");
 
+    // Safety net: si el bot dice "asesor/escalar/equipo" pero NO llamó
+    // request_handoff (la conversación sigue 'live'), forzamos handoff.
+    // Evita perder cancelaciones/quejas cuando Claude solo lo verbaliza.
+    const yaEsHandoff = (turn.tool_calls || []).some((t: any) => t.name === "request_handoff");
+    if (!yaEsHandoff && /\b(asesor|escalar|equipo humano|equipo|escalo|pasar tu caso|te contactará[nr]?)\b/i.test(reply)) {
+      await supa.from("ai_conversations").update({
+        estado: "handoff",
+        metadata: {
+          ...(isB2B && aliado ? { canal_tipo: "b2b", aliado_id: aliado.aliado_id, aliado_nombre: aliado.aliado_nombre } : (isConfirm ? { canal_tipo: "confirm" } : {})),
+          handoff: {
+            motivo: "auto-detectado: bot mencionó asesor/escalación",
+            tema: "otro",
+            solicitado_at: new Date().toISOString(),
+            fuente: "safety_net",
+          },
+        },
+      }).eq("id", convId);
+    }
+
     // 7) Enviar respuesta por WA Cloud API — usa token del canal; si no hay,
     // busca en otro canal activo de la misma WABA (comparten token de Meta);
     // último recurso, el env.
