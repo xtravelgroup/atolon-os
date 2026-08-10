@@ -661,10 +661,11 @@ export default function App() {
   // Listen for cross-module navigation requests (e.g. CXC → Reservas, Clientes → Reservas)
   useEffect(() => {
     const handler = (e) => {
-      const { modulo, reservaId, clienteId, aliadoId } = e.detail || {};
-      if (reservaId) window.__openReservaId = reservaId;
-      if (clienteId) window.__openClienteId = clienteId;
-      if (aliadoId)  window.__openAliadoId  = aliadoId;
+      const { modulo, reservaId, clienteId, aliadoId, conversationId } = e.detail || {};
+      if (reservaId)      window.__openReservaId      = reservaId;
+      if (clienteId)      window.__openClienteId      = clienteId;
+      if (aliadoId)       window.__openAliadoId       = aliadoId;
+      if (conversationId) window.__openConversationId = conversationId;
       if (modulo) {
         // Remember previous module to return to it
         window.__previousModule = activeModule;

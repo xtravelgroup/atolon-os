@@ -4,6 +4,7 @@ import { B, COP, todayDisplay, todayStr } from "../brand";
 import { supabase } from "../lib/supabase";
 import { setAuditMode } from "../lib/auditMode";
 import { GRUPOS_NAV, BOTTOM_NAV } from "../lib/modulosCatalogo";
+import HandoffBell from "../components/HandoffBell";
 
 async function logout() {
   await supabase.auth.signOut();
@@ -741,6 +742,8 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
             {!isMobile && <span style={{ fontSize: 12, color: T.textLight }}>{todayDisplay()}</span>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {/* Campana handoffs — solo si el usuario tiene acceso a conversaciones */}
+            {canSee("conversaciones_ai") && <HandoffBell isLight={isLight} />}
             {/* Toggle tema */}
             <button
               onClick={() => setTheme(isLight ? "dark" : "light")}

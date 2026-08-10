@@ -26,6 +26,22 @@ export default function Conversations({ tenantId }) {
   }, [tenantId, filter, search]);
   useEffect(() => { load(); }, [load]);
 
+  // Cross-module navigation: al montar, si otro módulo (HandoffBell) pidió
+  // abrir una conversación específica, seleccionarla apenas cargue la lista.
+  useEffect(() => {
+    if (!rows.length) return;
+    const targetId = window.__openConversationId;
+    if (!targetId) return;
+    const found = rows.find(r => r.id === targetId);
+    if (found) setSelected(found);
+    else {
+      // Puede no estar en el filtro actual — cargarla directo por id
+      supabase.from("ai_conversations").select("*").eq("id", targetId).maybeSingle()
+        .then(({ data }) => { if (data) setSelected(data); });
+    }
+    window.__openConversationId = null;
+  }, [rows]);
+
   useEffect(() => {
     if (!selected) { setMessages([]); setCustomerReservas([]); return; }
     supabase.from("ai_messages").select("*").eq("conversation_id", selected.id).order("created_at").then(({ data }) => setMessages(data || []));
