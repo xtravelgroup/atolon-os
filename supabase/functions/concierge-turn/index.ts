@@ -43,14 +43,19 @@ Deno.serve(async (req) => {
     //   contacto)
     const isB2B = !!b2b_context?.aliado_id;
     const isConfirm = !isB2B && !!confirm_context?.customer_telefono;
+    const linea = isB2B ? "b2b" : isConfirm ? "confirm" : "general";
     const agentQuery = isB2B
       ? supa.from("ai_agents").select("*").eq("id", "AGT-ATOLON-B2B").maybeSingle()
-      : supa.from("ai_agents").select("*").eq("tenant_id", tenant_id).eq("activo", true).neq("id", "AGT-ATOLON-B2B").limit(1).maybeSingle();
+      : isConfirm
+      ? supa.from("ai_agents").select("*").eq("id", "AGT-ATOLON-CONFIRM").maybeSingle()
+      : supa.from("ai_agents").select("*").eq("id", "AGT-ATOLON-MAIN").maybeSingle();
     const B2B_TOOL_NAMES = ["get_agency_context", "check_availability_b2b", "create_b2b_booking", "generate_payment_link_b2b", "get_recent_bookings", "redeem_points", "update_booking_price_mode", "cancel_booking"];
     const CUSTOMER_ONLY_TOOL_NAMES = ["get_customer_reservations"];
     const [{ data: agent }, { data: kb }, { data: allTools }] = await Promise.all([
       agentQuery,
-      supa.from("ai_knowledge_base").select("*").eq("tenant_id", tenant_id).eq("activo", true).limit(20),
+      // KB filtrada por línea: entradas de esta línea + entradas 'todas' (compartidas)
+      supa.from("ai_knowledge_base").select("*").eq("tenant_id", tenant_id).eq("activo", true)
+        .or(`linea.eq.${linea},linea.eq.todas,linea.is.null`).limit(20),
       supa.from("ai_tools").select("*").eq("tenant_id", tenant_id).eq("activo", true),
     ]);
     if (!agent) return json({ ok: false, error: `No hay agente ${isB2B ? "B2B" : "principal"} activo` }, 400);

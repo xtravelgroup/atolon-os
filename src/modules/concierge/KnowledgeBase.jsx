@@ -3,10 +3,13 @@ import { supabase } from "../../lib/supabase";
 import { B } from "../../brand";
 import { CARD, HEADER, IS, LS, BTN, TAG, EMPTY } from "./_shared.jsx";
 
+const LINEA_TAG = { b2b: ["#a88530", "🏢 B2B"], confirm: ["#22c55e", "✅ Confirm"], general: ["#38bdf8", "🌐 General"], todas: [B.sand, "🌍 Todas"] };
+
 export default function KnowledgeBase({ tenantId }) {
   const [items, setItems] = useState([]);
+  const [filterLinea, setFilterLinea] = useState("all");
   const [showAdd, setShowAdd] = useState(null); // 'text' | 'url' | 'file'
-  const [form, setForm] = useState({ nombre: "", contenido: "", url: "", scope: "tenant" });
+  const [form, setForm] = useState({ nombre: "", contenido: "", url: "", scope: "tenant", linea: "todas" });
   const [file, setFile] = useState(null);
   const [saving, setSaving] = useState(false);
 
@@ -28,14 +31,20 @@ export default function KnowledgeBase({ tenantId }) {
     const id = `KB-${Date.now()}`;
     const row = {
       id, tenant_id: tenantId, nombre: form.nombre.trim(), tipo: showAdd, scope: form.scope,
+      linea: form.linea || "todas",
       contenido: showAdd === "text" ? form.contenido : null,
       url: showAdd === "url" ? form.url : null,
       file_url,
       tokens: showAdd === "text" ? Math.ceil((form.contenido || "").length / 4) : 0,
     };
     await supabase.from("ai_knowledge_base").insert(row);
-    setShowAdd(null); setForm({ nombre: "", contenido: "", url: "", scope: "tenant" }); setFile(null);
+    setShowAdd(null); setForm({ nombre: "", contenido: "", url: "", scope: "tenant", linea: "todas" }); setFile(null);
     setSaving(false); load();
+  };
+
+  const cambiarLinea = async (r, nuevaLinea) => {
+    await supabase.from("ai_knowledge_base").update({ linea: nuevaLinea }).eq("id", r.id);
+    load();
   };
 
   const toggle = async (r) => {
@@ -65,19 +74,40 @@ export default function KnowledgeBase({ tenantId }) {
           <div style={{ fontSize: 12, color: "#fff", fontWeight: 700, marginTop: 6 }}>Add Text</div>
         </button>
       </div>
+      {/* Filtro por línea */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+        {[["all","Todas"],["todas","🌍 Compartidas"],["general","🌐 General"],["confirm","✅ Confirm"],["b2b","🏢 B2B"]].map(([k,l]) => (
+          <button key={k} onClick={() => setFilterLinea(k)}
+            style={{ background: filterLinea===k?B.sky:B.navyLight, color: filterLinea===k?B.navy:"#fff",
+              border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>{l}</button>
+        ))}
+      </div>
+
       {items.length === 0 ? <EMPTY text="Aún no hay contenido en la KB. Agrega texto, URLs o archivos para que el agente los use." /> : (
         <div style={CARD}>
           <table style={{ width: "100%", fontSize: 12 }}>
             <thead>
               <tr style={{ color: B.sand, textTransform: "uppercase", fontSize: 10, letterSpacing: 1, textAlign: "left" }}>
-                <th style={{ padding: 8 }}>Nombre</th><th>Tipo</th><th>Scope</th><th>Tokens</th><th>Activo</th><th></th>
+                <th style={{ padding: 8 }}>Nombre</th><th>Tipo</th><th>Línea</th><th>Scope</th><th>Tokens</th><th>Activo</th><th></th>
               </tr>
             </thead>
             <tbody>
-              {items.map(r => (
+              {items.filter(r => filterLinea === "all" || (r.linea || "todas") === filterLinea).map(r => {
+                const lineaVal = r.linea || "todas";
+                return (
                 <tr key={r.id} style={{ borderTop: `1px solid ${B.navyLight}`, color: "#fff" }}>
                   <td style={{ padding: 10 }}>{r.nombre}</td>
                   <td>{TAG(B.sky, r.tipo)}</td>
+                  <td>
+                    <select value={lineaVal} onChange={e => cambiarLinea(r, e.target.value)}
+                      style={{ background: (LINEA_TAG[lineaVal]?.[0] || B.sand) + "22", color: LINEA_TAG[lineaVal]?.[0] || B.sand,
+                        border: `1px solid ${LINEA_TAG[lineaVal]?.[0] || B.sand}55`, borderRadius: 6, padding: "3px 6px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      <option value="todas">🌍 Todas</option>
+                      <option value="general">🌐 General</option>
+                      <option value="confirm">✅ Confirm</option>
+                      <option value="b2b">🏢 B2B</option>
+                    </select>
+                  </td>
                   <td>{TAG(r.scope === "global" ? "#a78bfa" : B.sand, r.scope)}</td>
                   <td>{r.tokens?.toLocaleString("es-CO") || 0}</td>
                   <td><input type="checkbox" checked={r.activo} onChange={() => toggle(r)} /></td>
@@ -85,7 +115,8 @@ export default function KnowledgeBase({ tenantId }) {
                     <button onClick={() => borrar(r)} style={{ background: "transparent", border: "none", color: B.danger, cursor: "pointer", fontSize: 14 }}>🗑</button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -120,12 +151,23 @@ export default function KnowledgeBase({ tenantId }) {
                   <input type="file" accept=".pdf,.txt,.md,.docx" onChange={e => setFile(e.target.files?.[0])} style={IS} />
                 </div>
               )}
-              <div>
-                <label style={LS}>Scope</label>
-                <select value={form.scope} onChange={e => setForm({ ...form, scope: e.target.value })} style={IS}>
-                  <option value="tenant">Solo este tenant</option>
-                  <option value="global">Global (todos los tenants)</option>
-                </select>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <label style={LS}>Línea</label>
+                  <select value={form.linea} onChange={e => setForm({ ...form, linea: e.target.value })} style={IS}>
+                    <option value="todas">🌍 Todas (aplica a los 3 agentes)</option>
+                    <option value="general">🌐 General (web, leads)</option>
+                    <option value="confirm">✅ Confirm (WA principal)</option>
+                    <option value="b2b">🏢 B2B (agencias)</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={LS}>Scope</label>
+                  <select value={form.scope} onChange={e => setForm({ ...form, scope: e.target.value })} style={IS}>
+                    <option value="tenant">Solo este tenant</option>
+                    <option value="global">Global (todos los tenants)</option>
+                  </select>
+                </div>
               </div>
             </div>
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>

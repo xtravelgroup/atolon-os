@@ -3,15 +3,23 @@ import { supabase } from "../../lib/supabase";
 import { B } from "../../brand";
 import { CARD, HEADER, IS, LS, BTN } from "./_shared.jsx";
 
+const LINEAS = [
+  { key: "general", label: "🌐 General",  desc: "Web, leads, carrito abandonado" },
+  { key: "confirm", label: "✅ Confirm",  desc: "Respuestas al WA principal (post-confirmación)" },
+  { key: "b2b",     label: "🏢 B2B",      desc: "Agencias y aliados" },
+];
+
 export default function Personalization({ tenantId }) {
+  const [linea, setLinea] = useState("general");
   const [agent, setAgent] = useState(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
-    supabase.from("ai_agents").select("*").eq("tenant_id", tenantId).limit(1)
+    setAgent(null);
+    supabase.from("ai_agents").select("*").eq("tenant_id", tenantId).eq("linea", linea).limit(1)
       .then(({ data }) => setAgent(data?.[0] || null));
-  }, [tenantId]);
+  }, [tenantId, linea]);
 
   const set = (patch) => setAgent(a => ({ ...a, ...patch }));
 
@@ -31,16 +39,39 @@ export default function Personalization({ tenantId }) {
     setTimeout(() => setMsg(""), 2500);
   };
 
-  if (!agent) return <div style={{ padding: 20, color: "rgba(255,255,255,0.5)" }}>Cargando…</div>;
-
   return (
     <div style={{ padding: 20 }}>
-      <HEADER title="🎨 Personalización" subtitle="Define la voz, tono y comportamiento del agente" right={
+      <HEADER title="🎨 Personalización" subtitle="Define la voz, tono y comportamiento del agente por línea" right={
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           {msg && <span style={{ fontSize: 12, color: msg.startsWith("✅") ? B.success : B.danger }}>{msg}</span>}
-          <button onClick={guardar} disabled={saving} style={BTN(B.success)}>{saving ? "…" : "💾 Guardar"}</button>
+          <button onClick={guardar} disabled={saving || !agent} style={BTN(B.success)}>{saving ? "…" : "💾 Guardar"}</button>
         </div>
       } />
+
+      {/* Selector de línea (B2B / Confirm / General) */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+        {LINEAS.map(L => {
+          const active = linea === L.key;
+          return (
+            <button key={L.key} onClick={() => setLinea(L.key)}
+              style={{
+                background: active ? B.sky : B.navyLight, color: active ? B.navy : "#fff",
+                border: "none", borderRadius: 8, padding: "10px 16px", cursor: "pointer",
+                fontWeight: active ? 800 : 500, fontSize: 13, display: "flex", flexDirection: "column",
+                alignItems: "flex-start", gap: 2, minWidth: 200,
+              }}>
+              <span>{L.label}</span>
+              <span style={{ fontSize: 10, opacity: active ? 0.75 : 0.6, fontWeight: 500 }}>{L.desc}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {!agent ? (
+        <div style={{ ...CARD, padding: 40, textAlign: "center", color: "rgba(255,255,255,0.5)" }}>
+          Cargando agente para la línea <b style={{ color: "#fff" }}>{linea}</b>…
+        </div>
+      ) : (
       <div style={{ ...CARD, display: "flex", flexDirection: "column", gap: 14, maxWidth: 780 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
           <div>
@@ -109,10 +140,11 @@ export default function Personalization({ tenantId }) {
             rows={12} style={{ ...IS, fontFamily: "monospace", fontSize: 12, lineHeight: 1.5 }}
             placeholder="Ej: Eres Sofía, la concierge de Atolón Beach Club. Habla siempre en primera persona…" />
           <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>
-            Este texto se agrega al system prompt en cada conversación. Define reglas duras, tono, ejemplos.
+            Este texto se agrega al system prompt cuando la conversación es de la línea <b style={{ color: "#fff" }}>{linea}</b>.
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }
