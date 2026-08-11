@@ -15,9 +15,18 @@ const cache = new Map();
  * Los llamadores usan resumen.total_ventas para totales, por_dia para series
  * diarias/mensuales, y por_metodo para segmentación por método de pago.
  */
+// Si el rango incluye hoy o el futuro (o es reciente <=1 día), NO cachear —
+// las ventas del día en curso siguen creciendo y el cache dejaba el KPI de
+// hoy en $0 hasta refresh manual.
+function incluyeHoy(to) {
+  const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+  return to >= hoy;
+}
+
 export async function getAyBRango(from, to) {
   const key = `${from}|${to}`;
-  if (cache.has(key)) return cache.get(key);
+  const puedeCachear = !incluyeHoy(to);
+  if (puedeCachear && cache.has(key)) return cache.get(key);
 
   try {
     const res = await fetch(
@@ -26,7 +35,7 @@ export async function getAyBRango(from, to) {
     );
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || "Error Loggro");
-    cache.set(key, data);
+    if (puedeCachear) cache.set(key, data);
     return data;
   } catch (e) {
     console.warn("[loggroAyB] fallback a cierres_caja:", e?.message);
