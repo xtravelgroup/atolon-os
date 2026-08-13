@@ -499,8 +499,8 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
   const tiposOpt = isGrupo ? TIPOS_GRUPO : TIPOS_EVT;
 
   const [form, setForm]       = useState(isEdit
-    ? { ...FE_EMPTY, ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [], buy_out: evento.buy_out || false, modalidad_pago: evento.modalidad_pago || "individual", pasadias_org: evento.pasadias_org || [], precio_tipo: evento.precio_tipo || "publico", fecha_fin: evento.fecha_fin || "", buy_out_fechas: evento.buy_out_fechas || [] }
-    : { nombre: "", tipo: tiposOpt[0], fecha: "", fecha_fin: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", nacionalidad: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false, buy_out_fechas: [], modalidad_pago: "individual", pasadias_org: [], precio_tipo: "publico", ...FE_EMPTY });
+    ? { ...FE_EMPTY, ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [], buy_out: evento.buy_out || false, modalidad_pago: evento.modalidad_pago || "individual", pasadias_org: evento.pasadias_org || [], precio_tipo: evento.precio_tipo || "publico", fecha_fin: evento.fecha_fin || "", buy_out_fechas: evento.buy_out_fechas || [], pvp_override_adulto: evento.pvp_override_adulto || "", pvp_override_nino: evento.pvp_override_nino || "" }
+    : { nombre: "", tipo: tiposOpt[0], fecha: "", fecha_fin: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", nacionalidad: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false, buy_out_fechas: [], modalidad_pago: "individual", pasadias_org: [], precio_tipo: "publico", pvp_override_adulto: "", pvp_override_nino: "", ...FE_EMPTY });
   const setFE = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const [saving,          setSaving]          = useState(false);
   const [horaInput,       setHoraInput]       = useState("");
@@ -848,6 +848,8 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
       modalidad_pago: form.modalidad_pago || "individual",
       pasadias_org:   form.pasadias_org || [],
       precio_tipo:    form.precio_tipo || "publico",
+      pvp_override_adulto: Number(form.pvp_override_adulto) > 0 ? Number(form.pvp_override_adulto) : null,
+      pvp_override_nino:   Number(form.pvp_override_nino)   > 0 ? Number(form.pvp_override_nino)   : null,
     };
     let savedId = evento?.id;
     let dbError = null;
@@ -1035,6 +1037,30 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
                   </div>
                 ))}
               </div>
+
+              {/* PVP override — solo modalidad individual */}
+              {form.modalidad_pago === "individual" && (
+                <div style={{ marginTop: 12, padding: "10px 12px", background: B.navy + "66", borderRadius: 10, border: `1px dashed ${B.navyLight}` }}>
+                  <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, fontWeight: 700 }}>
+                    💰 PVP invitado (opcional · sobrescribe precio catálogo · no afecta neto agencia)
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div>
+                      <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 3 }}>PVP adulto</label>
+                      <input type="number" value={form.pvp_override_adulto} onChange={e => set("pvp_override_adulto", e.target.value)}
+                        placeholder="Dejar vacío = precio catálogo" style={{ ...IS, fontSize: 12 }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 3 }}>PVP niño</label>
+                      <input type="number" value={form.pvp_override_nino} onChange={e => set("pvp_override_nino", e.target.value)}
+                        placeholder="Dejar vacío = precio catálogo" style={{ ...IS, fontSize: 12 }} />
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 6, lineHeight: 1.4 }}>
+                    Cuando el invitado abra el link del grupo verá este PVP. Si hay agencia B2B asociada, el neto que la agencia paga sigue viniendo del convenio — este override solo cambia el PVP que ve el cliente final.
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

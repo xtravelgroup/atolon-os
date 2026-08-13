@@ -585,12 +585,18 @@ export default function BookingPopup() {
         setFotoPrincipal(data.foto_principal_url || "");
         setFotosExtra(data.fotos_adicionales || []);
         setFotoActiva(0);
-        // Override hardcoded prices with live DB values
+        // Override hardcoded prices with live DB values.
+        // Si el invitado viene por link de grupo con PVP override, el precio
+        // público del grupo pisa el del catálogo (el neto/agencia queda
+        // igual — se paga al aliado según convenio, no según lo que el
+        // organizador puso al cliente final).
+        const pvpAdu = Number(grupoEvt?.pvp_override_adulto) || 0;
+        const pvpNin = Number(grupoEvt?.pvp_override_nino)   || 0;
         setProduct(prev => ({
           ...prev,
-          precio:         data.precio         ?? prev.precio,
+          precio:         pvpAdu > 0 ? pvpAdu : (data.precio         ?? prev.precio),
           precioNeto:     data.precio_neto_agencia ?? prev.precioNeto,
-          precioNino:     data.precio_nino     ?? prev.precioNino,
+          precioNino:     pvpNin > 0 ? pvpNin : (data.precio_nino     ?? prev.precioNino),
           precioNetoNino: data.precio_neto_nino ?? prev.precioNetoNino,
           ninoNota:       data.nino_nota       ?? prev.ninoNota,
           noNinos:        (data.precio_nino === 0 || data.precio_nino === null) ? true : prev.noNinos,
@@ -598,7 +604,7 @@ export default function BookingPopup() {
       }
       setIncluye(incData || []);
     });
-  }, [product?.pasadiaId]); // only re-run when product ID changes, not on every price update
+  }, [product?.pasadiaId, grupoEvt?.pvp_override_adulto, grupoEvt?.pvp_override_nino]); // re-run when product ID or grupo override changes
 
   // Load month-level availability + salidas catalog
   useEffect(() => {
