@@ -1243,7 +1243,8 @@ export default function ProcesarNomina() {
                       const gHoras   = g.empleados.reduce((s, x) => s + (x.calc.marcaciones?.horas || 0), 0);
                       const gExtraD  = g.empleados.reduce((s, x) => s + (x.calc.marcaciones?.h_extra_diurna || 0), 0);
                       const gExtraN  = g.empleados.reduce((s, x) => s + (x.calc.marcaciones?.h_extra_nocturna || 0), 0);
-                      const gRecN    = g.empleados.reduce((s, x) => s + (x.calc.marcaciones?.h_recargo_nocturno || 0) + (x.calc.marcaciones?.h_recargo_nocturno_festivo || 0), 0);
+                      const gRecN    = g.empleados.reduce((s, x) => s + (x.calc.marcaciones?.h_recargo_nocturno || 0), 0);
+                      const gRecF    = g.empleados.reduce((s, x) => s + (x.calc.marcaciones?.h_recargo_festivo || 0) + (x.calc.marcaciones?.h_recargo_nocturno_festivo || 0), 0);
                       const gFaltas  = g.empleados.reduce((s, x) => s + (x.calc.dias_no_trabajados || 0), 0);
                       return (
                         <div key={g.deptoId} style={{
@@ -1263,11 +1264,12 @@ export default function ProcesarNomina() {
                               {gExtraD > 0 && <span style={{ color: B.sand }}>+{gExtraD.toFixed(1)}h ext.diu</span>}
                               {gExtraN > 0 && <span style={{ color: B.sand }}>+{gExtraN.toFixed(1)}h ext.noc</span>}
                               {gRecN > 0 && <span style={{ color: "#a78bfa" }}>{gRecN.toFixed(1)}h rec.noc</span>}
+                              {gRecF > 0 && <span style={{ color: "#f472b6" }}>{gRecF.toFixed(1)}h rec.fest</span>}
                               {gFaltas > 0 && <span style={{ color: B.warning }}>{gFaltas} falta(s)</span>}
                             </div>
                           </div>
                           <div style={{ overflowX: "auto" }}>
-                            <table width="100%" cellPadding={0} cellSpacing={0} style={{ fontSize: 13, minWidth: 780 }}>
+                            <table width="100%" cellPadding={0} cellSpacing={0} style={{ fontSize: 13, minWidth: 860 }}>
                               <thead>
                                 <tr style={{ background: "rgba(255,255,255,0.02)" }}>
                                   <th style={thStyle}>Empleado</th>
@@ -1276,7 +1278,8 @@ export default function ProcesarNomina() {
                                   <th style={{ ...thStyle, textAlign: "right" }} title="Total horas trabajadas (almuerzo ya descontado)">Horas</th>
                                   <th style={{ ...thStyle, textAlign: "right" }}>Extra diurna</th>
                                   <th style={{ ...thStyle, textAlign: "right" }}>Extra nocturna</th>
-                                  <th style={{ ...thStyle, textAlign: "right" }} title="Recargo nocturno + recargo nocturno festivo">Recargo noct.</th>
+                                  <th style={{ ...thStyle, textAlign: "right" }} title="Recargo nocturno (21:00-06:00) sin festivo">Rec. noct.</th>
+                                  <th style={{ ...thStyle, textAlign: "right" }} title="Recargo festivo diurno + festivo nocturno">Rec. festivo</th>
                                   <th style={{ ...thStyle, textAlign: "right" }}>Faltas</th>
                                   <th style={thStyle}></th>
                                 </tr>
@@ -1287,7 +1290,8 @@ export default function ProcesarNomina() {
                                   const horas   = Number(dg.horas || 0);
                                   const hExtD   = Number(dg.h_extra_diurna || 0);
                                   const hExtN   = Number(dg.h_extra_nocturna || 0);
-                                  const hRecN   = Number(dg.h_recargo_nocturno || 0) + Number(dg.h_recargo_nocturno_festivo || 0);
+                                  const hRecN   = Number(dg.h_recargo_nocturno || 0);
+                                  const hRecF   = Number(dg.h_recargo_festivo || 0) + Number(dg.h_recargo_nocturno_festivo || 0);
                                   return (
                                     <tr key={empleado.id} onClick={() => setDetalleEmpleado(empleado)}
                                       style={{ borderTop: `1px solid ${B.navyLight}33`, cursor: "pointer" }}
@@ -1303,6 +1307,7 @@ export default function ProcesarNomina() {
                                       <td style={{ ...tdStyle, textAlign: "right", color: hExtD > 0 ? B.sand : "rgba(255,255,255,0.3)" }}>{hExtD > 0 ? `+${hExtD.toFixed(1)}h` : "—"}</td>
                                       <td style={{ ...tdStyle, textAlign: "right", color: hExtN > 0 ? B.sand : "rgba(255,255,255,0.3)" }}>{hExtN > 0 ? `+${hExtN.toFixed(1)}h` : "—"}</td>
                                       <td style={{ ...tdStyle, textAlign: "right", color: hRecN > 0 ? "#a78bfa" : "rgba(255,255,255,0.3)" }}>{hRecN > 0 ? `${hRecN.toFixed(1)}h` : "—"}</td>
+                                      <td style={{ ...tdStyle, textAlign: "right", color: hRecF > 0 ? "#f472b6" : "rgba(255,255,255,0.3)" }}>{hRecF > 0 ? `${hRecF.toFixed(1)}h` : "—"}</td>
                                       <td style={{ ...tdStyle, textAlign: "right", color: calc.dias_no_trabajados > 0 ? B.warning : "rgba(255,255,255,0.3)" }}>
                                         {calc.dias_no_trabajados > 0 ? `${calc.dias_no_trabajados}` : "—"}
                                       </td>
