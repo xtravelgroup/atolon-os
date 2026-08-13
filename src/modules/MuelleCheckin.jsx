@@ -791,10 +791,14 @@ function ModalCobro({ llegada, onClose, onSaved }) {
   const [reservasVinculables, setReservasVinculables] = useState([]);
   useEffect(() => {
     if (!supabase || !llegada.fecha) return;
+    // Postgrest a veces devuelve `date` como timestamp con T00:00:00 según
+    // el driver. Recortamos a YYYY-MM-DD para que .eq matchee con
+    // reservas.fecha (que es tipo date puro).
+    const fechaDia = String(llegada.fecha).slice(0, 10);
     (async () => {
       const { data } = await supabase.from("reservas")
         .select("id, nombre, tipo, pax, pax_a, pax_n, nombre_embarcacion, canal, estado, aliado_id")
-        .eq("fecha", llegada.fecha)
+        .eq("fecha", fechaDia)
         .neq("estado", "cancelado")
         .or("tipo.ilike.%after%,tipo.ilike.%restaurant%,tipo.ilike.%a consumo%,tipo.ilike.%consumo%");
       setReservasVinculables(data || []);
