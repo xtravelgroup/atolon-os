@@ -629,18 +629,30 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
     return pasadiasPrecios.find(x => String(x.nombre || "").trim().toLowerCase() === k);
   };
   // Precio unitario por tipo de pasadía (adulto)
+  // En modo público, si el operador puso `precio_manual_adulto` (override PVP
+  // para este grupo) se respeta. El neto de agencia NO se puede sobreescribir
+  // desde aquí — sigue viniendo del catálogo/convenio para no afectar comisiones.
   const getPrecioTipo = (p) => {
     if (p.tipo === "Impuesto Muelle") return PRECIO_MUELLE;
     if (p.tipo === "STAFF") return Number(p.precio_manual) || 0;
+    if (form.precio_tipo === "publico" && Number(p.precio_manual_adulto) > 0) return Number(p.precio_manual_adulto);
     const match = matchPasadia(p.tipo);
     if (!match) return null;
     return form.precio_tipo === "neto" ? (match.precio_neto_agencia || match.precio) : match.precio;
   };
-  // Precio unitario niño
+  // Precio unitario niño (mismo comportamiento: override solo en público)
   const getPrecioNino = (p) => {
+    if (form.precio_tipo === "publico" && Number(p.precio_manual_nino) > 0) return Number(p.precio_manual_nino);
     const match = matchPasadia(p.tipo);
     if (!match) return 0;
     return form.precio_tipo === "neto" ? (match.precio_neto_nino || 0) : (match.precio_nino || 0);
+  };
+  // Precio de catálogo (referencia readonly cuando hay override)
+  const getPrecioCatalogo = (p, quien = "adulto") => {
+    const match = matchPasadia(p.tipo);
+    if (!match) return null;
+    if (form.precio_tipo === "neto") return quien === "nino" ? (match.precio_neto_nino || 0) : (match.precio_neto_agencia || match.precio || 0);
+    return quien === "nino" ? (match.precio_nino || 0) : (match.precio || 0);
   };
 
   // Total nuevo basado en pasadias_org — con desglose adultos/niños
@@ -1233,6 +1245,41 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
                             </div>
                           </div>
                         )}
+
+                        {/* Override PVP (solo modo público, no STAFF ni Muelle) */}
+                        {!isStaff && !isMuelle && form.precio_tipo === "publico" && (() => {
+                          const catAdu = getPrecioCatalogo(p, "adulto");
+                          const catNin = getPrecioCatalogo(p, "nino");
+                          return (
+                            <div style={{ marginTop: 8, padding: "8px 10px", background: B.navy + "66", borderRadius: 8, border: `1px dashed ${B.navyLight}` }}>
+                              <div style={{ fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6, fontWeight: 700 }}>
+                                💰 PVP cliente (opcional · sobrescribe precio catálogo · no afecta neto agencia)
+                              </div>
+                              <div style={{ display: "grid", gridTemplateColumns: conNinos ? "1fr 1fr" : "1fr", gap: 8 }}>
+                                <div>
+                                  <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 3 }}>
+                                    PVP adulto {catAdu ? <span style={{ color: "rgba(255,255,255,0.35)" }}>· catálogo {COP(catAdu)}</span> : ""}
+                                  </label>
+                                  <input type="number" value={p.precio_manual_adulto || ""}
+                                    onChange={e => setPasadiaOrg(p.id, "precio_manual_adulto", e.target.value)}
+                                    placeholder={catAdu ? String(catAdu) : "0"}
+                                    style={{ ...IS, fontSize: 12 }} />
+                                </div>
+                                {conNinos && (
+                                  <div>
+                                    <label style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 3 }}>
+                                      PVP niño {catNin ? <span style={{ color: "rgba(255,255,255,0.35)" }}>· catálogo {COP(catNin)}</span> : ""}
+                                    </label>
+                                    <input type="number" value={p.precio_manual_nino || ""}
+                                      onChange={e => setPasadiaOrg(p.id, "precio_manual_nino", e.target.value)}
+                                      placeholder={catNin ? String(catNin) : "0"}
+                                      style={{ ...IS, fontSize: 12 }} />
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     );
                   })}
