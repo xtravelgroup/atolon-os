@@ -305,7 +305,7 @@ function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad,
             <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1 }}>{empleado.cargo || "—"}</div>
             <div style={{ fontSize: 22, fontWeight: 700, color: B.white }}>{empleado.nombres} {empleado.apellidos}</div>
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
-              CC: {empleado.cedula || "—"}{esAdmin ? ` · Salario base: ${COP(empleado.salario_base)} / mes` : ""}
+              CC: {empleado.cedula || "—"}
             </div>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: B.white, fontSize: 22, cursor: "pointer" }}>×</button>
@@ -324,113 +324,78 @@ function DetalleDrawer({ empleado, calc, onClose, onAddNovedad, onDeleteNovedad,
           />
         )}
 
-        {/* DEVENGADO — solo admin */}
-        {esAdmin && (
+        {/* RESUMEN DE HORAS + RECARGOS — solo horas, sin montos en $ */}
         <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 14 }}>
-          <div style={{ fontSize: 11, color: B.success, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 12 }}>✓ Devengado</div>
-          <Row
-            label={`Salario ordinario (${calc.marcaciones?.horas_ordinarias ?? 0} de 95.33 h)`}
-            value={COP(calc.devengado.salario_ordinario)}
-            sub={calc.dias_no_trabajados > 0 ? `−${calc.dias_no_trabajados} día(s) por faltas` : `${calc.dias_trabajados} días · tarifa ${COP(calc.tarifa_hora)}/h`} />
-
-          {(() => {
-            const dg = calc.marcaciones; const d = calc.devengado;
-            // Recargos: SOLO sobre horas ordinarias (la hora base ya está en el
-            // salario; aquí se suma únicamente el % adicional).
-            const recargos = dg ? [
-              [`Recargo nocturno (+${PCT(REC_NOCTURNO)})`,          dg.h_recargo_nocturno,         d.recargo_nocturno],
-              [`Recargo festivo (+${PCT(REC_FESTIVO)})`,            dg.h_recargo_festivo,          d.recargo_festivo],
-              [`Recargo nocturno festivo (+${PCT(REC_NOCTURNO_FESTIVO)})`, dg.h_recargo_nocturno_festivo, d.recargo_nocturno_festivo],
-            ].filter(([, , v]) => v > 0) : [];
-            // Horas extra: pago COMPLETO × factor. El factor ya incluye la
-            // nocturnidad/festividad → NO se les suma recargo aparte.
-            const extras = dg ? [
-              [`Hora extra diurna (${MUL(EXTRA_DIURNA)})`,           dg.h_extra_diurna,           d.extra_diurna],
-              [`Hora extra nocturna (${MUL(EXTRA_NOCTURNA)})`,       dg.h_extra_nocturna,         d.extra_nocturna],
-              [`Hora extra festiva diurna (${MUL(EXTRA_FESTIVA_DIURNA)})`,   dg.h_extra_festiva_diurna,   d.extra_festiva_diurna],
-              [`Hora extra festiva nocturna (${MUL(EXTRA_FESTIVA_NOCTURNA)})`, dg.h_extra_festiva_nocturna, d.extra_festiva_nocturna],
-            ].filter(([, , v]) => v > 0) : [];
-            return (
-              <>
-                {recargos.length > 0 && (
-                  <>
-                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginTop: 12, marginBottom: 6 }}>
-                      Recargos · solo horas ordinarias
-                    </div>
-                    {recargos.map(([label, horas, valor]) => (
-                      <Row key={label} label={label} value={"+ " + COP(valor)} sub={`${horas} h ordinarias`} />
-                    ))}
-                  </>
-                )}
-                {extras.length > 0 && (
-                  <>
-                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginTop: 12, marginBottom: 6 }}>
-                      Horas extra · pago completo (el factor ya incluye recargo)
-                    </div>
-                    {extras.map(([label, horas, valor]) => (
-                      <Row key={label} label={label} value={"+ " + COP(valor)} sub={`${horas} h`} />
-                    ))}
-                  </>
-                )}
-              </>
-            );
-          })()}
-
-          <Row label="Auxilio transporte" value={COP(calc.devengado.auxilio_transporte)} muted={calc.devengado.auxilio_transporte === 0} sub={calc.devengado.auxilio_transporte === 0 && empleado.salario_base > (2 * SMMLV_2026) ? "no aplica (>2 SMMLV)" : null} />
-          {calc.devengado.items.length > 0 && (
-            <>
-              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginTop: 12, marginBottom: 6 }}>Bonos / novedades manuales</div>
-              {calc.devengado.items.map((n, i) => (
-                <Row key={n.id || i} label={n.label} value={"+ " + COP(Math.abs(n.valor))}
-                  sub={n.descripcion || `${n.fecha_inicio || ""}`}
-                  onDelete={() => onDeleteNovedad?.(n)} />
-              ))}
-            </>
-          )}
-          <Total label="Subtotal devengado" value={COP(calc.devengado.subtotal)} color={B.success} />
+          <div style={{ fontSize: 11, color: B.sky, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 12 }}>📊 Resumen del período</div>
+          <Row label="Días trabajados" value={`${calc.dias_trabajados}`} />
+          <Row label="Horas totales (almuerzo descontado)" value={`${calc.marcaciones?.horas || 0} h`} />
+          <Row label="Horas ordinarias" value={`${calc.marcaciones?.horas_ordinarias || 0} h`} />
+          <Row label="Horas extra" value={`${calc.marcaciones?.horas_extra || 0} h`} muted={(calc.marcaciones?.horas_extra || 0) === 0} />
+          <Row label="Horas nocturnas" value={`${calc.marcaciones?.horas_nocturnas || 0} h`} muted={(calc.marcaciones?.horas_nocturnas || 0) === 0} />
+          <Row label="Faltas" value={calc.dias_no_trabajados > 0 ? `${calc.dias_no_trabajados} día(s)` : "—"} muted={calc.dias_no_trabajados === 0} />
         </div>
-        )}
 
-        {/* DEDUCCIONES — solo admin */}
-        {esAdmin && (
-        <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 14 }}>
-          <div style={{ fontSize: 11, color: B.warning, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 12 }}>− Deducciones</div>
-          <Row label="Aporte salud (4%)" value={"− " + COP(calc.deducciones.aporte_salud)} />
-          <Row label="Aporte pensión (4%)" value={"− " + COP(calc.deducciones.aporte_pension)} />
-          {calc.deducciones.items.length > 0 && (
-            <>
-              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginTop: 12, marginBottom: 6 }}>Otros descuentos</div>
-              {calc.deducciones.items.map((n, i) => (
-                <Row key={n.id || i} label={n.label} value={"− " + COP(Math.abs(n.valor))}
-                  sub={n.descripcion || `${n.fecha_inicio || ""}`}
-                  onDelete={() => onDeleteNovedad?.(n)} />
-              ))}
-            </>
-          )}
-          <Total label="Subtotal deducciones" value={"− " + COP(calc.deducciones.subtotal)} color={B.warning} />
-        </div>
-        )}
-
-        {/* NETO — solo admin */}
-        {esAdmin && (
-          <div style={{ background: B.sand + "11", border: `2px solid ${B.sand}`, borderRadius: 12, padding: 20, marginBottom: 14 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-              <span style={{ fontSize: 14, color: B.sand, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>Neto a pagar</span>
-              <span style={{ fontSize: 32, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 800, color: B.sand }}>{COP(calc.neto)}</span>
+        {/* RECARGOS Y EXTRAS — desglose completo, en horas (sin $) */}
+        {(() => {
+          const dg = calc.marcaciones;
+          if (!dg) return null;
+          // Recargos: sobre horas ordinarias trabajadas (la hora base ya está en el salario)
+          const recargos = [
+            [`Recargo nocturno (+${PCT(REC_NOCTURNO)})`,                  dg.h_recargo_nocturno],
+            [`Recargo festivo (+${PCT(REC_FESTIVO)})`,                    dg.h_recargo_festivo],
+            [`Recargo nocturno festivo (+${PCT(REC_NOCTURNO_FESTIVO)})`,  dg.h_recargo_nocturno_festivo],
+          ].filter(([, h]) => h > 0);
+          // Horas extra: pago completo por factor (nocturnidad/festividad ya incluidas en el factor)
+          const extras = [
+            [`Hora extra diurna (${MUL(EXTRA_DIURNA)})`,                    dg.h_extra_diurna],
+            [`Hora extra nocturna (${MUL(EXTRA_NOCTURNA)})`,                dg.h_extra_nocturna],
+            [`Hora extra festiva diurna (${MUL(EXTRA_FESTIVA_DIURNA)})`,    dg.h_extra_festiva_diurna],
+            [`Hora extra festiva nocturna (${MUL(EXTRA_FESTIVA_NOCTURNA)})`, dg.h_extra_festiva_nocturna],
+          ].filter(([, h]) => h > 0);
+          if (recargos.length === 0 && extras.length === 0) return null;
+          return (
+            <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 14 }}>
+              <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 12 }}>⚡ Recargos y horas extra</div>
+              {recargos.length > 0 && (
+                <>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginBottom: 6 }}>
+                    Recargos · sobre horas ordinarias
+                  </div>
+                  {recargos.map(([label, h]) => (
+                    <Row key={label} label={label} value={`${h} h`} />
+                  ))}
+                </>
+              )}
+              {extras.length > 0 && (
+                <>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", marginTop: 12, marginBottom: 6 }}>
+                    Horas extra · factor ya incluye recargo
+                  </div>
+                  {extras.map(([label, h]) => (
+                    <Row key={label} label={label} value={`${h} h`} />
+                  ))}
+                </>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
-        {/* Resumen para supervisor (solo horas y días) */}
-        {!esAdmin && (
+        {/* NOVEDADES MANUALES (bonos / descuentos) — solo listado sin montos */}
+        {(calc.devengado.items.length > 0 || calc.deducciones.items.length > 0) && (
           <div style={{ background: B.navyMid, borderRadius: 12, padding: 16, marginBottom: 14 }}>
-            <div style={{ fontSize: 11, color: B.sky, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 12 }}>📊 Resumen del período</div>
-            <Row label="Días trabajados" value={`${calc.dias_trabajados}`} />
-            <Row label="Horas totales (marcaciones)" value={`${calc.marcaciones?.horas || 0} h`} />
-            <Row label="Horas ordinarias" value={`${calc.marcaciones?.horas_ordinarias || 0} h`} />
-            <Row label="Horas extra" value={`${calc.marcaciones?.horas_extra || 0} h`} muted={(calc.marcaciones?.horas_extra || 0) === 0} />
-            <Row label="Horas nocturnas" value={`${calc.marcaciones?.horas_nocturnas || 0} h`} muted={(calc.marcaciones?.horas_nocturnas || 0) === 0} />
-            <Row label="Faltas" value={calc.dias_no_trabajados > 0 ? `${calc.dias_no_trabajados} día(s)` : "—"} muted={calc.dias_no_trabajados === 0} />
+            <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 12 }}>📝 Novedades manuales del período</div>
+            {calc.devengado.items.map((n, i) => (
+              <Row key={"d" + (n.id || i)} label={`+ ${n.label}`}
+                value={n.cantidad ? `${n.cantidad}` : "✓"}
+                sub={n.descripcion || n.fecha_inicio || ""}
+                onDelete={() => onDeleteNovedad?.(n)} />
+            ))}
+            {calc.deducciones.items.map((n, i) => (
+              <Row key={"r" + (n.id || i)} label={`− ${n.label}`}
+                value={n.cantidad ? `${n.cantidad}` : "✓"}
+                sub={n.descripcion || n.fecha_inicio || ""}
+                onDelete={() => onDeleteNovedad?.(n)} />
+            ))}
           </div>
         )}
 
