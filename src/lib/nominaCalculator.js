@@ -24,11 +24,35 @@ export const APORTE_SALUD        = 0.04;      // 4% empleado
 export const APORTE_PENSION      = 0.04;      // 4% empleado
 
 // ── Festivos Colombia 2026 (Ley 51/1983 + traslado lunes Emiliani) ──────────
+// Festivos oficiales Colombia 2026 (19 en total).
+// Incluye 13-jul (Virgen de Chiquinquirá) aprobado bajo la Ley 2578 de 2026.
+// Efectos en nómina:
+//  - Quien TRABAJA un festivo → paga recargo festivo (80%), o recargo
+//    nocturno festivo (115%) si además cae en horario nocturno.
+//    Ver desglosarPeriodo (categoriza minutos festivos).
+//  - Quien NO trabaja un festivo → el día se paga igual, no se descuenta
+//    del salario ordinario aunque el supervisor marque "falta" para esa
+//    fecha (clasificarNovedades ignora faltas que caen en festivo).
 export const FESTIVOS_CO_2026 = new Set([
-  "2026-01-01","2026-01-12","2026-03-23","2026-04-02","2026-04-03",
-  "2026-05-01","2026-05-18","2026-06-08","2026-06-15","2026-06-29",
-  "2026-07-20","2026-08-07","2026-08-17","2026-10-12","2026-11-02",
-  "2026-11-16","2026-12-08","2026-12-25",
+  "2026-01-01", // Año Nuevo (Jue)
+  "2026-01-12", // Día de los Reyes Magos (Lun)
+  "2026-03-23", // Día de San José (Lun)
+  "2026-04-02", // Jueves Santo
+  "2026-04-03", // Viernes Santo
+  "2026-05-01", // Día del Trabajo (Vie)
+  "2026-05-18", // Ascensión del Señor (Lun)
+  "2026-06-08", // Corpus Christi (Lun)
+  "2026-06-15", // Sagrado Corazón de Jesús (Lun)
+  "2026-06-29", // San Pedro y San Pablo (Lun)
+  "2026-07-13", // Virgen de Chiquinquirá (Lun) — NUEVO, Ley 2578/2026
+  "2026-07-20", // Día de la Independencia (Lun)
+  "2026-08-07", // Batalla de Boyacá (Vie)
+  "2026-08-17", // Asunción de la Virgen (Lun)
+  "2026-10-12", // Día de la Diversidad Étnica y Cultural (Lun)
+  "2026-11-02", // Día de Todos los Santos (Lun)
+  "2026-11-16", // Independencia de Cartagena (Lun)
+  "2026-12-08", // Día de la Inmaculada Concepción (Mar)
+  "2026-12-25", // Navidad (Vie)
 ]);
 
 // ── Clasificación de tipos de novedades ──────────────────────────────────────
@@ -420,7 +444,7 @@ export function aportesEmpleado(devengadoBase) {
  * Filtra solo las novedades dentro del período [desde, hasta] (intersección
  * con fecha_inicio/fecha_fin).
  */
-export function clasificarNovedades(novedades = [], desde, hasta) {
+export function clasificarNovedades(novedades = [], desde, hasta, festivos = FESTIVOS_CO_2026) {
   const dentro = (n) => {
     const ini = n.fecha_inicio || desde;
     const fin = n.fecha_fin || ini || hasta;
@@ -445,10 +469,18 @@ export function clasificarNovedades(novedades = [], desde, hasta) {
       out.devengado.push({ ...n, label: tipoMeta.label });
       out.total_devengado += Math.abs(valor);
     } else if (tipoMeta.categoria === "deducido") {
-      out.deducido.push({ ...n, label: tipoMeta.label });
-      out.total_deducido += Math.abs(valor);
-      if (n.tipo === "falta" || n.tipo === "licencia_no_remunerada") {
-        out.dias_no_trabajados += cant || 1;
+      // Faltas / licencias no remuneradas que caen en día FESTIVO no
+      // descuentan el día (el festivo se paga por ley aunque el
+      // empleado no se presente). También quita el valor deducido para
+      // no restarle plata por no ir al trabajo un feriado.
+      const esFalta = n.tipo === "falta" || n.tipo === "licencia_no_remunerada";
+      const enFestivo = esFalta && n.fecha && festivos?.has?.(String(n.fecha).slice(0, 10));
+      if (enFestivo) {
+        out.informativo.push({ ...n, label: `${tipoMeta.label} (festivo — no descuenta)` });
+      } else {
+        out.deducido.push({ ...n, label: tipoMeta.label });
+        out.total_deducido += Math.abs(valor);
+        if (esFalta) out.dias_no_trabajados += cant || 1;
       }
     } else {
       out.informativo.push({ ...n, label: tipoMeta.label });
@@ -485,7 +517,7 @@ export function tarifaHoraEmpleado(empleado) {
 export function calcularNominaEmpleado({ empleado, periodo, novedades = [], marcaciones = [], ventana = null, festivos = FESTIVOS_CO_2026 }) {
   const dias = diasDelPeriodo(periodo.desde, periodo.hasta).length;
   const vNov = ventana || { desde: periodo.desde, hasta: periodo.hasta };
-  const claves = clasificarNovedades(novedades, vNov.desde, vNov.hasta);
+  const claves = clasificarNovedades(novedades, vNov.desde, vNov.hasta, festivos);
 
   const salarioBase = Number(empleado?.salario_base || 0);
   const tarifaHora  = tarifaHoraEmpleado(empleado);
