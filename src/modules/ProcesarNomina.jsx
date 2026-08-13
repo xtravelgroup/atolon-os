@@ -1162,7 +1162,8 @@ export default function ProcesarNomina() {
         </div>
       )}
 
-      {/* KPIs — solo admin ve montos. Supervisor solo ve empleados + horas. */}
+      {/* KPIs — solo horas/faltas. Los montos monetarios se ven en el módulo
+          Nómina (después de guardar), aquí el foco es validar horas. */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
         <Kpi label="Empleados activos" value={empleadosFiltrados.length} color={B.sky} />
         {(() => {
@@ -1176,15 +1177,6 @@ export default function ProcesarNomina() {
             </>
           );
         })()}
-        {esAdmin && (
-          <>
-            <Kpi label="Salario ordinario" value={COP(totales.base)} sub="95.33 h/quincena × empleados" />
-            <Kpi label="Aux. transporte" value={COP(totales.aux)} sub={`${AUX_TRANSPORTE_2026.toLocaleString("es-CO")} máx/mes`} />
-            <Kpi label="Novedades + (bonos/extras)" value={COP(totales.extras)} color={B.success} />
-            <Kpi label="Novedades − (descuentos)" value={COP(totales.descuentos)} color={B.warning} />
-            <Kpi label="NETO A PAGAR" value={COP(totales.neto)} color={B.sand} sub={`Devengado ${COP(totales.devengado)} − Deducciones ${COP(totales.deducciones)}`} />
-          </>
-        )}
       </div>
 
       {/* Filtros + acción (guardar nómina consolidada solo admin) */}
@@ -1210,18 +1202,16 @@ export default function ProcesarNomina() {
           Sin empleados que coincidan.
         </div>
       ) : esAdmin ? (
-        // ── Vista admin: tabla completa con montos, agrupada por departamento
-        //    con secciones separadas "Pendientes" y "Aprobados". Cuando el
-        //    admin filtra por un depto, se muestra ese depto solo.
+        // ── Vista admin: solo horas/faltas, agrupada por departamento con
+        //    secciones "Pendientes" y "Aprobados". Los montos monetarios se
+        //    ven en el módulo Nómina (después de guardar).
         (() => {
-          // 1) Agrupar empleadosFiltrados por depto
           const grupos = new Map();
           for (const row of empleadosFiltrados) {
             const dId = row.empleado.departamento_id || "__sin__";
             if (!grupos.has(dId)) grupos.set(dId, []);
             grupos.get(dId).push(row);
           }
-          // 2) Convertir a array [{ depto, empleados, aprobado }] ordenado por nombre
           const gruposArr = [...grupos.entries()].map(([dId, emps]) => {
             const depto = departamentos.find(d => d.id === dId);
             const apro = aprobPorDepto[dId];
@@ -1234,7 +1224,6 @@ export default function ProcesarNomina() {
               aprobadoAt: apro?.aprobado_at || null,
             };
           });
-          // Pendientes primero (para que el admin vea qué falta), después aprobados
           const pendientes = gruposArr.filter(g => !g.aprobado).sort((a, b) => a.deptoNombre.localeCompare(b.deptoNombre));
           const aprobados  = gruposArr.filter(g =>  g.aprobado).sort((a, b) => a.deptoNombre.localeCompare(b.deptoNombre));
           const secciones  = [
@@ -1251,22 +1240,17 @@ export default function ProcesarNomina() {
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                     {sec.grupos.map(g => {
-                      const gTotales = g.empleados.reduce((acc, x) => ({
-                        base:   acc.base   + (x.calc.devengado.salario_base_periodo || 0),
-                        aux:    acc.aux    + (x.calc.devengado.auxilio_transporte  || 0),
-                        extras: acc.extras + (x.calc.devengado.extras_recargos_bonos || 0),
-                        aportes:acc.aportes+ (x.calc.deducciones.aporte_salud + x.calc.deducciones.aporte_pension || 0),
-                        desc:   acc.desc   + (x.calc.deducciones.otros_descuentos || 0),
-                        neto:   acc.neto   + (x.calc.neto || 0),
-                        horas:  acc.horas  + (x.calc.marcaciones?.horas || 0),
-                      }), { base: 0, aux: 0, extras: 0, aportes: 0, desc: 0, neto: 0, horas: 0 });
+                      const gHoras   = g.empleados.reduce((s, x) => s + (x.calc.marcaciones?.horas || 0), 0);
+                      const gExtraD  = g.empleados.reduce((s, x) => s + (x.calc.marcaciones?.h_extra_diurna || 0), 0);
+                      const gExtraN  = g.empleados.reduce((s, x) => s + (x.calc.marcaciones?.h_extra_nocturna || 0), 0);
+                      const gRecN    = g.empleados.reduce((s, x) => s + (x.calc.marcaciones?.h_recargo_nocturno || 0) + (x.calc.marcaciones?.h_recargo_nocturno_festivo || 0), 0);
+                      const gFaltas  = g.empleados.reduce((s, x) => s + (x.calc.dias_no_trabajados || 0), 0);
                       return (
                         <div key={g.deptoId} style={{
                           background: B.navyMid, borderRadius: 12, overflow: "hidden",
                           border: g.aprobado ? `2px solid ${B.success}55` : `1px solid ${B.navyLight}`,
                         }}>
-                          {/* Header del depto */}
-                          <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", background: g.aprobado ? B.success + "15" : "rgba(255,255,255,0.03)" }}>
+                          <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", background: g.aprobado ? B.success + "15" : "rgba(255,255,255,0.03)", flexWrap: "wrap", gap: 8 }}>
                             <div>
                               <span style={{ fontSize: 14, fontWeight: 800, color: "#fff" }}>{g.deptoNombre}</span>
                               <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginLeft: 10 }}>· {g.empleados.length} empleado{g.empleados.length === 1 ? "" : "s"}</span>
@@ -1274,62 +1258,58 @@ export default function ProcesarNomina() {
                                 <span style={{ fontSize: 10, color: B.success, marginLeft: 10 }}>✓ por {g.aprobadoPor.split("@")[0]}{g.aprobadoAt ? ` · ${new Date(g.aprobadoAt).toLocaleDateString("es-CO")}` : ""}</span>
                               )}
                             </div>
-                            <div style={{ fontSize: 13, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>
-                              Neto: {COP(gTotales.neto)}
+                            <div style={{ display: "flex", gap: 12, fontSize: 12, fontWeight: 700, flexWrap: "wrap" }}>
+                              <span style={{ color: B.sky }}>{gHoras.toFixed(1)}h</span>
+                              {gExtraD > 0 && <span style={{ color: B.sand }}>+{gExtraD.toFixed(1)}h ext.diu</span>}
+                              {gExtraN > 0 && <span style={{ color: B.sand }}>+{gExtraN.toFixed(1)}h ext.noc</span>}
+                              {gRecN > 0 && <span style={{ color: "#a78bfa" }}>{gRecN.toFixed(1)}h rec.noc</span>}
+                              {gFaltas > 0 && <span style={{ color: B.warning }}>{gFaltas} falta(s)</span>}
                             </div>
                           </div>
-                          {/* Tabla del depto */}
                           <div style={{ overflowX: "auto" }}>
-                            <table width="100%" cellPadding={0} cellSpacing={0} style={{ fontSize: 13, minWidth: 760 }}>
+                            <table width="100%" cellPadding={0} cellSpacing={0} style={{ fontSize: 13, minWidth: 780 }}>
                               <thead>
                                 <tr style={{ background: "rgba(255,255,255,0.02)" }}>
                                   <th style={thStyle}>Empleado</th>
                                   <th style={thStyle}>Cargo</th>
-                                  <th style={{ ...thStyle, textAlign: "right" }}>Horas</th>
-                                  <th style={{ ...thStyle, textAlign: "right" }}>Base período</th>
-                                  <th style={{ ...thStyle, textAlign: "right" }}>Aux. transp.</th>
-                                  <th style={{ ...thStyle, textAlign: "right" }}>Novedades +</th>
-                                  <th style={{ ...thStyle, textAlign: "right" }}>Aportes</th>
-                                  <th style={{ ...thStyle, textAlign: "right" }}>Desc.</th>
-                                  <th style={{ ...thStyle, textAlign: "right" }}>Neto</th>
+                                  <th style={{ ...thStyle, textAlign: "right" }}>Días</th>
+                                  <th style={{ ...thStyle, textAlign: "right" }} title="Total horas trabajadas (almuerzo ya descontado)">Horas</th>
+                                  <th style={{ ...thStyle, textAlign: "right" }}>Extra diurna</th>
+                                  <th style={{ ...thStyle, textAlign: "right" }}>Extra nocturna</th>
+                                  <th style={{ ...thStyle, textAlign: "right" }} title="Recargo nocturno + recargo nocturno festivo">Recargo noct.</th>
+                                  <th style={{ ...thStyle, textAlign: "right" }}>Faltas</th>
                                   <th style={thStyle}></th>
                                 </tr>
                               </thead>
                               <tbody>
-                                {g.empleados.map(({ empleado, calc }) => (
-                                  <tr key={empleado.id} onClick={() => setDetalleEmpleado(empleado)}
-                                    style={{ borderTop: `1px solid ${B.navyLight}33`, cursor: "pointer" }}
-                                    onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.03)"}
-                                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                                    <td style={{ ...tdStyle, fontWeight: 600 }}>
-                                      {empleado.nombres} {empleado.apellidos}
-                                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>CC: {empleado.cedula || "—"}</div>
-                                    </td>
-                                    <td style={{ ...tdStyle, color: "rgba(255,255,255,0.6)" }}>{empleado.cargo || "—"}</td>
-                                    <td style={{ ...tdStyle, textAlign: "right", color: B.sky }}>
-                                      {calc.marcaciones?.horas || 0}h
-                                      {(calc.marcaciones?.horas_extra || 0) > 0 && <div style={{ fontSize: 10, color: B.sand }}>+{calc.marcaciones.horas_extra}h ex</div>}
-                                    </td>
-                                    <td style={{ ...tdStyle, textAlign: "right", color: calc.dias_no_trabajados > 0 ? B.warning : B.white }}>
-                                      {COP(calc.devengado.salario_base_periodo)}
-                                      {calc.dias_no_trabajados > 0 && <div style={{ fontSize: 10, color: B.warning }}>−{calc.dias_no_trabajados} falta(s)</div>}
-                                    </td>
-                                    <td style={{ ...tdStyle, textAlign: "right", color: calc.devengado.auxilio_transporte > 0 ? B.white : "rgba(255,255,255,0.3)" }}>
-                                      {calc.devengado.auxilio_transporte > 0 ? COP(calc.devengado.auxilio_transporte) : "—"}
-                                    </td>
-                                    <td style={{ ...tdStyle, textAlign: "right", color: calc.devengado.extras_recargos_bonos > 0 ? B.success : "rgba(255,255,255,0.3)" }}>
-                                      {calc.devengado.extras_recargos_bonos > 0 ? "+" + COP(calc.devengado.extras_recargos_bonos) : "—"}
-                                    </td>
-                                    <td style={{ ...tdStyle, textAlign: "right", color: B.warning + "AA" }}>−{COP(calc.deducciones.aporte_salud + calc.deducciones.aporte_pension)}</td>
-                                    <td style={{ ...tdStyle, textAlign: "right", color: calc.deducciones.otros_descuentos > 0 ? B.warning : "rgba(255,255,255,0.3)" }}>
-                                      {calc.deducciones.otros_descuentos > 0 ? "−" + COP(calc.deducciones.otros_descuentos) : "—"}
-                                    </td>
-                                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif", fontSize: 15 }}>
-                                      {COP(calc.neto)}
-                                    </td>
-                                    <td style={{ ...tdStyle, color: B.sky }}>→</td>
-                                  </tr>
-                                ))}
+                                {g.empleados.map(({ empleado, calc }) => {
+                                  const dg      = calc.marcaciones || {};
+                                  const horas   = Number(dg.horas || 0);
+                                  const hExtD   = Number(dg.h_extra_diurna || 0);
+                                  const hExtN   = Number(dg.h_extra_nocturna || 0);
+                                  const hRecN   = Number(dg.h_recargo_nocturno || 0) + Number(dg.h_recargo_nocturno_festivo || 0);
+                                  return (
+                                    <tr key={empleado.id} onClick={() => setDetalleEmpleado(empleado)}
+                                      style={{ borderTop: `1px solid ${B.navyLight}33`, cursor: "pointer" }}
+                                      onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.03)"}
+                                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                                      <td style={{ ...tdStyle, fontWeight: 600 }}>
+                                        {empleado.nombres} {empleado.apellidos}
+                                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>CC: {empleado.cedula || "—"}</div>
+                                      </td>
+                                      <td style={{ ...tdStyle, color: "rgba(255,255,255,0.6)" }}>{empleado.cargo || "—"}</td>
+                                      <td style={{ ...tdStyle, textAlign: "right", color: B.white }}>{calc.dias_trabajados ?? "—"}</td>
+                                      <td style={{ ...tdStyle, textAlign: "right", color: B.sky, fontWeight: 700 }}>{horas.toFixed(1)}h</td>
+                                      <td style={{ ...tdStyle, textAlign: "right", color: hExtD > 0 ? B.sand : "rgba(255,255,255,0.3)" }}>{hExtD > 0 ? `+${hExtD.toFixed(1)}h` : "—"}</td>
+                                      <td style={{ ...tdStyle, textAlign: "right", color: hExtN > 0 ? B.sand : "rgba(255,255,255,0.3)" }}>{hExtN > 0 ? `+${hExtN.toFixed(1)}h` : "—"}</td>
+                                      <td style={{ ...tdStyle, textAlign: "right", color: hRecN > 0 ? "#a78bfa" : "rgba(255,255,255,0.3)" }}>{hRecN > 0 ? `${hRecN.toFixed(1)}h` : "—"}</td>
+                                      <td style={{ ...tdStyle, textAlign: "right", color: calc.dias_no_trabajados > 0 ? B.warning : "rgba(255,255,255,0.3)" }}>
+                                        {calc.dias_no_trabajados > 0 ? `${calc.dias_no_trabajados}` : "—"}
+                                      </td>
+                                      <td style={{ ...tdStyle, color: B.sky }}>→</td>
+                                    </tr>
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>
@@ -1339,17 +1319,6 @@ export default function ProcesarNomina() {
                   </div>
                 </div>
               ))}
-
-              {/* Total general al final */}
-              <div style={{ background: B.navy, borderRadius: 12, padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", border: `1px solid ${B.sand}55` }}>
-                <div>
-                  <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>Total general · {periodo.etiqueta}</div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>{empleadosFiltrados.length} empleados · {empleadosFiltrados.reduce((s, x) => s + (x.calc.marcaciones?.horas || 0), 0).toFixed(1)}h</div>
-                </div>
-                <div style={{ fontSize: 24, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>
-                  {COP(totales.neto)}
-                </div>
-              </div>
             </div>
           );
         })()
