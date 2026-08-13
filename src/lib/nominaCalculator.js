@@ -157,20 +157,28 @@ export function esDominical(fechaIso) {
 // ── Marcaciones (entrada/salida) → horas + recargos de ley ───────────────────
 // Modelo CO 2026 (jornada 44 h/sem, Ley 2101). Constantes ajustables.
 export const HORAS_QUINCENA_LEGAL = 95.33333333;          // h ordinarias/quincena
-export const HORAS_MES_LEGAL      = 190.66666667;         // = 95.3333 × 2
-export const JORNADA_DIARIA_HORAS  = 7.33333333;          // ordinaria máx por día (44h/sem ÷ 6)
-export const JORNADA_SEMANAL_HORAS = 44;                  // gate: extra solo si la semana supera esto
+// Divisor legal para tarifa hora — sigue siendo 190.667 (Circular MinTrabajo
+// 001/2023): aunque la jornada semanal baja a 42h, el divisor para calcular
+// el valor hora se mantiene para no reducir el salario mínimo.
+export const HORAS_MES_LEGAL      = 190.66666667;         // = 95.3333 × 2 (divisor de tarifa)
+// Jornada máxima ordinaria — 2° sem 2026 la Ley 2101 completa la reducción
+// progresiva a 42 h/semana (fase final; era 44 h en 2025).
+export const JORNADA_SEMANAL_HORAS = 42;                  // gate: extra solo si la semana supera esto
+export const JORNADA_DIARIA_HORAS  = JORNADA_SEMANAL_HORAS / 6; // = 7 h/día
 export const NOCTURNO_INICIO_H    = 19;                   // 7:00 p.m. inicia nocturno (CO 2026)
 export const NOCTURNO_FIN_H       = 6;                    // 06:00 termina nocturno
 // Recargos sobre la hora ordinaria (aditivos: la hora base ya está en el salario).
-export const REC_NOCTURNO          = 0.35;                // recargo nocturno
-export const REC_FESTIVO           = 0.80;                // recargo festivo (domingos NO)
-export const REC_NOCTURNO_FESTIVO  = REC_NOCTURNO + REC_FESTIVO; // nocturno + festivo
+// Recargo dominical/festivo sube a 90% a partir de julio 2026 (Ley 2466/2025).
+// Los recargos derivados (nocturno festivo, extras festivas) heredan el cambio
+// vía composición — no hay que actualizarlos manualmente.
+export const REC_NOCTURNO          = 0.35;                // recargo nocturno (35%)
+export const REC_FESTIVO           = 0.90;                // recargo festivo (90% desde jul-2026, Ley 2466/2025)
+export const REC_NOCTURNO_FESTIVO  = REC_NOCTURNO + REC_FESTIVO; // 125% = 35 + 90
 // Horas extra: multiplicador total (no están cubiertas por el salario).
 export const EXTRA_DIURNA          = 1.25;                // hora extra diurna (+25%)
 export const EXTRA_NOCTURNA        = 1.75;                // hora extra nocturna (+75%)
-export const EXTRA_FESTIVA_DIURNA  = 1 + REC_FESTIVO + 0.25; // festiva + extra diurna
-export const EXTRA_FESTIVA_NOCTURNA = 1 + REC_FESTIVO + 0.75; // festiva + extra nocturna
+export const EXTRA_FESTIVA_DIURNA  = 1 + REC_FESTIVO + 0.25; // 2.15 = base + festivo + extra diurna (115% recargo)
+export const EXTRA_FESTIVA_NOCTURNA = 1 + REC_FESTIVO + 0.75; // 2.65 = base + festivo + extra nocturna (165% recargo)
 
 function hhmmAMin(s) {
   if (!s) return null;
