@@ -288,14 +288,23 @@ export default function GrupoCotizacionModal({ evento, pasadiasOrg = [], servici
   }, [evento?.vendedor]);
 
   // ── Resolver precios de pasadías ──
+  // Jerarquía (idéntica a TabServicios de EventoDetalle):
+  //   1. p.precio_manual (STAFF) → tal cual, sobre-escribe todo
+  //   2. Modo público + p.precio_manual_adulto → override por línea (organizador)
+  //   3. Modo público + evento.pvp_override_adulto → override global (individual)
+  //   4. Catálogo (neto agencia o precio público según precioTipo)
   const precioTipo = evento?.precio_tipo || "publico";
   const resolverPrecio = (p) => {
     if (Number(p.precio_manual) > 0) return Number(p.precio_manual);
+    if (precioTipo === "publico" && Number(p.precio_manual_adulto) > 0) return Number(p.precio_manual_adulto);
+    if (precioTipo === "publico" && Number(evento?.pvp_override_adulto) > 0) return Number(evento.pvp_override_adulto);
     const match = pasadiasMap[(p.tipo || "").toLowerCase()];
     if (match) return precioTipo === "neto" ? (match.precio_neto_agencia || 0) : (match.precio || 0);
     return 0;
   };
   const resolverPrecioNino = (p) => {
+    if (precioTipo === "publico" && Number(p.precio_manual_nino) > 0) return Number(p.precio_manual_nino);
+    if (precioTipo === "publico" && Number(evento?.pvp_override_nino) > 0) return Number(evento.pvp_override_nino);
     const match = pasadiasMap[(p.tipo || "").toLowerCase()];
     if (match) return precioTipo === "neto" ? (match.precio_neto_nino || 0) : (match.precio_nino || 0);
     return 0;
