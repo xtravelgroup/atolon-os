@@ -233,6 +233,11 @@ export default function BookingPopup() {
   const tipoQ   = (params.get("tipo") || pathSlug || "").trim();
   const grupoQ  = params.get("grupo") || "";   // grupo mode: EVT-xxx
   const recoveryTokenQ = params.get("r") || "";  // Recovery link token
+  // ?ref=<codigo_fijo> — atribuye la reserva a un aliado B2B/freelance
+  // (p.ej. ATO-00260 = Alvaro Gonzalez DJ Bear). El cliente reserva y paga
+  // por el widget público normal; la reserva queda con aliado_id para
+  // que el aliado la vea en su portal y cuente para sus comisiones.
+  const refCodigoQ = (params.get("ref") || "").trim().toUpperCase();
   // Auto-detect device language if ?lang= not explicitly set
   const deviceLang = navigator.language?.slice(0, 2).toLowerCase() || "es";
   const initLang = (params.get("lang") || (deviceLang === "en" ? "en" : "es")).toLowerCase();
@@ -259,6 +264,7 @@ export default function BookingPopup() {
 
   const [product,    setProduct]   = useState(matchedProduct);
   const [grupoEvt,   setGrupoEvt]  = useState(null);  // the group event record
+  const [refAliado,  setRefAliado] = useState(null);  // resolved from ?ref=<codigo_fijo>
   const [grupoLock,  setGrupoLock] = useState(false);  // date/salida locked by group
   const [calYear,    setCalYear]   = useState(() => { const n = new Date(); return n.getFullYear(); });
   const [calMonth,   setCalMonth]  = useState(() => { const n = new Date(); return n.getMonth(); });
@@ -568,6 +574,17 @@ export default function BookingPopup() {
       setStep(1);
     });
   }, [grupoQ]);
+
+  // Load aliado B2B when ?ref=<codigo_fijo> present (freelance/agencia sin login)
+  useEffect(() => {
+    if (!refCodigoQ || !supabase) return;
+    supabase.from("aliados_b2b")
+      .select("id, nombre, tipo, estado, codigo_fijo")
+      .eq("codigo_fijo", refCodigoQ)
+      .eq("estado", "activo")
+      .maybeSingle()
+      .then(({ data }) => { if (data) setRefAliado(data); });
+  }, [refCodigoQ]);
 
   // In group mode, salidas come from grupoEvt.salidas_grupo — no auto-preselect needed
 
@@ -893,8 +910,8 @@ export default function BookingPopup() {
         // SIEMPRE a "GRUPO" aunque el registro del evento no haya cargado
         // (evento borrado/renombrado, RLS, error de red). Así la reserva queda
         // consistente con la sesión (que ya se marca "grupo" por el param URL).
-        canal:          (grupoEvt || grupoQ) ? "GRUPO" : "WEB",
-        aliado_id:      grupoEvt?.aliado_id || null,
+        canal:          (grupoEvt || grupoQ) ? "GRUPO" : refAliado ? "AFILIADO" : "WEB",
+        aliado_id:      grupoEvt?.aliado_id || refAliado?.id || null,
         grupo_id:       grupoEvt?.id || grupoQ || null,
         nombre:         form.nombre,
         email:          form.email,
@@ -1778,8 +1795,8 @@ export default function BookingPopup() {
               contacto:       form.nombre,
               email:          form.email,
               tel:            form.telefono,
-              canal:          (grupoEvt || grupoQ) ? "GRUPO" : "WEB",
-              vendedor:       grupoEvt?.vendedor || "Web",
+              canal:          (grupoEvt || grupoQ) ? "GRUPO" : refAliado ? "AFILIADO" : "WEB",
+              vendedor:       grupoEvt?.vendedor || (refAliado ? refAliado.nombre : "Web"),
               stage:          "Nuevo",
               valor_est:      total,
               fecha_creacion: hoy,
@@ -1788,9 +1805,12 @@ export default function BookingPopup() {
                 ? `GRUPO: ${grupoEvt.nombre} · ${product.tipo} · ${selDate} · ${paxA + paxN} pax`
                 : grupoQ
                   ? `GRUPO ${grupoQ} (evento no cargado) · ${product.tipo} · ${selDate} · ${paxA + paxN} pax`
-                  : `${product.tipo} · ${selDate} · ${paxA + paxN} pax · Inicio de compra online`,
+                  : refAliado
+                    ? `AFILIADO ${refAliado.codigo_fijo} (${refAliado.nombre}) · ${product.tipo} · ${selDate} · ${paxA + paxN} pax`
+                    : `${product.tipo} · ${selDate} · ${paxA + paxN} pax · Inicio de compra online`,
               etiquetas:      grupoEvt ? ["grupo", product.slug, grupoEvt.id]
                               : grupoQ  ? ["grupo", product.slug, grupoQ]
+                              : refAliado ? ["afiliado", product.slug, refAliado.codigo_fijo]
                               : ["web", product.slug],
             });
             setLeadId(lid);
