@@ -857,6 +857,9 @@ function ModalCobro({ llegada, onClose, onSaved }) {
     }
   };
 
+  // Si la llegada YA fue cobrada, editar solo actualiza los datos y cierra —
+  // no vuelve al paso de cobro (evita doble cobro al vincular con reserva).
+  const yaCobrada = Number(llegada.total_cobrado) > 0;
   const handleConfirmarDatos = async () => {
     if (!supabase || saving) return;
     setSaving(true);
@@ -873,8 +876,9 @@ function ModalCobro({ llegada, onClose, onSaved }) {
       aliado_id: f.aliado_id || null,
     }).eq("id", llegada.id);
     setSaving(false);
-    // Si es after_island, continuar a cobro; si no, guardar y cerrar
-    if (esAfterIsland) setPaso(2);
+    // Después de guardar: si es after_island NO cobrado aún → ir a paso cobro.
+    // Si ya fue cobrada, o es otro tipo → cerrar directo.
+    if (esAfterIsland && !yaCobrada) setPaso(2);
     else onSaved();
   };
 
@@ -1131,10 +1135,10 @@ function ModalCobro({ llegada, onClose, onSaved }) {
               </button>
               <button onClick={handleConfirmarDatos} disabled={saving}
                 style={{ flex: 2, padding: "11px", borderRadius: 10, border: "none",
-                  background: saving ? B.navyLight : (esAfterIsland ? B.sand : B.success),
-                  color: saving ? "rgba(255,255,255,0.4)" : B.navy,
+                  background: saving ? B.navyLight : ((esAfterIsland && !yaCobrada) ? B.sand : B.success),
+                  color: saving ? "rgba(255,255,255,0.4)" : ((esAfterIsland && !yaCobrada) ? B.navy : "#fff"),
                   fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
-                {saving ? "Guardando..." : esAfterIsland ? "Confirmar → Cobrar" : "✓ Confirmar Llegada"}
+                {saving ? "Guardando..." : (esAfterIsland && !yaCobrada) ? "Confirmar → Cobrar" : "✓ Guardar cambios"}
               </button>
             </div>
           </>
