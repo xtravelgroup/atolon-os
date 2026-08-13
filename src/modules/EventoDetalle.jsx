@@ -2855,15 +2855,23 @@ function TabServicios({ items, onChange, pasadiasOrg = [], onChangePasadias, cat
   const [loadingMenu, setLoadingMenu] = useState(false);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  // Resolver precio adulto: precio_manual → lookup en tabla pasadias
+  // Resolver precio adulto — jerarquía:
+  //   1. precio_manual (STAFF) → tal cual
+  //   2. Modo público + precio_manual_adulto en la línea → override por línea (grupo organizador)
+  //   3. Modo público + pvp_override_adulto del evento → override global (grupo individual)
+  //   4. Catálogo (neto agencia o precio público según precioTipo)
   const resolverPrecio = (p) => {
     if (Number(p.precio_manual) > 0) return Number(p.precio_manual);
+    if (precioTipo === "publico" && Number(p.precio_manual_adulto) > 0) return Number(p.precio_manual_adulto);
+    if (precioTipo === "publico" && Number(evento?.pvp_override_adulto) > 0) return Number(evento.pvp_override_adulto);
     const match = pasadiasMap[(p.tipo || "").toLowerCase()];
     if (match) return precioTipo === "neto" ? (match.precio_neto_agencia || 0) : (match.precio || 0);
     return 0;
   };
-  // Resolver precio niño
+  // Resolver precio niño — misma jerarquía
   const resolverPrecioNino = (p) => {
+    if (precioTipo === "publico" && Number(p.precio_manual_nino) > 0) return Number(p.precio_manual_nino);
+    if (precioTipo === "publico" && Number(evento?.pvp_override_nino) > 0) return Number(evento.pvp_override_nino);
     const match = pasadiasMap[(p.tipo || "").toLowerCase()];
     if (match) return precioTipo === "neto" ? (match.precio_neto_nino || 0) : (match.precio_nino || 0);
     return 0;
@@ -4731,10 +4739,14 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
       {tab === "pagos"     && (() => {
         const resolverPrecioLocal = (p) => {
           if (Number(p.precio_manual) > 0) return Number(p.precio_manual);
+          if (Number(p.precio_manual_adulto) > 0) return Number(p.precio_manual_adulto);
+          if (Number(evento?.pvp_override_adulto) > 0) return Number(evento.pvp_override_adulto);
           const match = pasadiasMap[(p.tipo || "").toLowerCase()];
           return match ? (match.precio || 0) : 0;
         };
         const resolverPrecioNinoLocal = (p) => {
+          if (Number(p.precio_manual_nino) > 0) return Number(p.precio_manual_nino);
+          if (Number(evento?.pvp_override_nino) > 0) return Number(evento.pvp_override_nino);
           const match = pasadiasMap[(p.tipo || "").toLowerCase()];
           return match ? (match.precio_nino || 0) : 0;
         };
