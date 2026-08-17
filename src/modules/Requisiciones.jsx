@@ -3024,11 +3024,17 @@ function DetailModal({ req, onClose, onUpdate, onGenerarOC, proveedores, reglas,
     loggro_id: it.loggro_id || null,
   });
   const [itemsEdit, setItemsEdit] = useState(() => req.items.map(cloneItem));
-  // Resync cuando cambia la req (después de guardar)
+  // Resync cuando cambia la req (después de guardar / al abrir otra req).
+  // NUNCA resync mientras `editPrecios` está activo — el realtime de
+  // `requisiciones` reasigna `req` con cada cambio en BD (otro usuario
+  // editando otra req, o hasta el propio save), y ese resync pisa los
+  // items nuevos que el usuario está agregando en vivo. Semilla al montar
+  // + resync al cerrar edit son suficientes.
   useEffect(() => {
+    if (editPrecios) return;
     setItemsEdit(req.items.map(cloneItem));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [req.id, req.items]);
+  }, [req.id, req.items, editPrecios]);
   // Catálogo para autocompletar al agregar items nuevos
   const [catalogoEdit, setCatalogoEdit] = useState([]);
   useEffect(() => {
