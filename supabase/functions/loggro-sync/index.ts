@@ -2105,7 +2105,25 @@ serve(async (req) => {
       }
 
       // 3. Expandir recetas: cada factura → productos → ingredients[] del producto
-      const getPrecio = (p: any) => Number(p?.locationsStock?.[0]?.avgCost) || Number(p?.locationsStock?.[0]?.pricePurchase) || Number(p?.pricePurchase) || 0;
+      // Fallback: si Loggro reporta precio=0 para un ingredient, buscamos en
+      // items_catalogo.precio_compra de Atolón (el operador puede corregir
+      // precios en Atolón sin tocar Loggro).
+      const SB = sb();
+      const { data: catAtolon } = await SB.from("items_catalogo")
+        .select("loggro_id, precio_compra")
+        .not("loggro_id", "is", null)
+        .not("precio_compra", "is", null);
+      const precioAtolonById: Record<string, number> = {};
+      for (const row of (catAtolon || [])) {
+        const p = Number(row.precio_compra);
+        if (p > 0) precioAtolonById[String(row.loggro_id)] = p;
+      }
+      const getPrecio = (p: any) => {
+        const loggro = Number(p?.locationsStock?.[0]?.avgCost) || Number(p?.locationsStock?.[0]?.pricePurchase) || Number(p?.pricePurchase) || 0;
+        if (loggro > 0) return loggro;
+        const fallback = precioAtolonById[String(p?._id || "")];
+        return fallback || 0;
+      };
       const getUnit = (p: any) => p?.unit?.shortName || p?.unit?.name || "";
 
       const movs: any[] = [];
