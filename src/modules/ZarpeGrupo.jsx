@@ -84,7 +84,7 @@ export default function ZarpeGrupo() {
     (async () => {
       const { data, error: err } = await supabase
         .from("eventos")
-        .select("id, nombre, fecha, pasadias_org, zarpe_data, invitados_zarpe, salidas_grupo")
+        .select("id, nombre, fecha, pasadias_org, zarpe_data, invitados_zarpe, salidas_grupo, preseleccion_menu, menu_platos_fuertes, menu_postres")
         .eq("id", eventoId)
         .single();
       if (err || !data) { setError("Grupo no encontrado"); setLoading(false); return; }
@@ -96,6 +96,8 @@ export default function ZarpeGrupo() {
           nombre:         entry.nombre         || "",
           identificacion: entry.identificacion || "",
           nacionalidad:   entry.nacionalidad   || "",
+          plato_fuerte:   entry.plato_fuerte   || "",
+          postre:         entry.postre         || "",
         };
       });
       setPaxDict(dict);
@@ -122,7 +124,7 @@ export default function ZarpeGrupo() {
     setPaxDict(prev => ({
       ...prev,
       [slot_id]: {
-        nombre: "", identificacion: "", nacionalidad: "",
+        nombre: "", identificacion: "", nacionalidad: "", plato_fuerte: "", postre: "",
         ...prev[slot_id],
         [field]: value,
       },
@@ -151,6 +153,8 @@ export default function ZarpeGrupo() {
         nombre:         d?.nombre         || "",
         identificacion: d?.identificacion || "",
         nacionalidad:   d?.nacionalidad   || "",
+        plato_fuerte:   d?.plato_fuerte   || "",
+        postre:         d?.postre         || "",
         checkin_at:     filled ? now : undefined,
       };
     });
@@ -418,6 +422,39 @@ export default function ZarpeGrupo() {
                           />
                         </div>
                       </div>
+                      {/* Pre-selección de menú (si el grupo lo activó) */}
+                      {evento.preseleccion_menu && (
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 4, paddingTop: 10, borderTop: `1px dashed ${C.border}` }}>
+                          <div>
+                            <label style={{ fontSize: 11, color: C.textMid, display: "block", marginBottom: 4 }}>
+                              🍽 Plato Fuerte
+                            </label>
+                            <select
+                              value={d.plato_fuerte || ""}
+                              onChange={e => setPax(s.slot_id, "plato_fuerte", e.target.value)}
+                              style={IS}>
+                              <option value="">— Selecciona —</option>
+                              {(evento.menu_platos_fuertes || []).map(opt => (
+                                <option key={opt} value={opt}>{opt}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: 11, color: C.textMid, display: "block", marginBottom: 4 }}>
+                              🍰 Postre
+                            </label>
+                            <select
+                              value={d.postre || ""}
+                              onChange={e => setPax(s.slot_id, "postre", e.target.value)}
+                              style={IS}>
+                              <option value="">— Selecciona —</option>
+                              {(evento.menu_postres || []).map(opt => (
+                                <option key={opt} value={opt}>{opt}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );

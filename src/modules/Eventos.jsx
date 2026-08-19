@@ -499,8 +499,8 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
   const tiposOpt = isGrupo ? TIPOS_GRUPO : TIPOS_EVT;
 
   const [form, setForm]       = useState(isEdit
-    ? { ...FE_EMPTY, ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [], buy_out: evento.buy_out || false, modalidad_pago: evento.modalidad_pago || "individual", pasadias_org: evento.pasadias_org || [], precio_tipo: evento.precio_tipo || "publico", fecha_fin: evento.fecha_fin || "", buy_out_fechas: evento.buy_out_fechas || [], pvp_override_adulto: evento.pvp_override_adulto || "", pvp_override_nino: evento.pvp_override_nino || "" }
-    : { nombre: "", tipo: tiposOpt[0], fecha: "", fecha_fin: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", nacionalidad: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false, buy_out_fechas: [], modalidad_pago: "individual", pasadias_org: [], precio_tipo: "publico", pvp_override_adulto: "", pvp_override_nino: "", ...FE_EMPTY });
+    ? { ...FE_EMPTY, ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [], buy_out: evento.buy_out || false, modalidad_pago: evento.modalidad_pago || "individual", pasadias_org: evento.pasadias_org || [], precio_tipo: evento.precio_tipo || "publico", fecha_fin: evento.fecha_fin || "", buy_out_fechas: evento.buy_out_fechas || [], pvp_override_adulto: evento.pvp_override_adulto || "", pvp_override_nino: evento.pvp_override_nino || "", preseleccion_menu: evento.preseleccion_menu || false, menu_platos_fuertes: Array.isArray(evento.menu_platos_fuertes) ? evento.menu_platos_fuertes.join("\n") : (evento.menu_platos_fuertes || ""), menu_postres: Array.isArray(evento.menu_postres) ? evento.menu_postres.join("\n") : (evento.menu_postres || "") }
+    : { nombre: "", tipo: tiposOpt[0], fecha: "", fecha_fin: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", nacionalidad: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false, buy_out_fechas: [], modalidad_pago: "individual", pasadias_org: [], precio_tipo: "publico", pvp_override_adulto: "", pvp_override_nino: "", preseleccion_menu: false, menu_platos_fuertes: "", menu_postres: "", ...FE_EMPTY });
   const setFE = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const [saving,          setSaving]          = useState(false);
   const [horaInput,       setHoraInput]       = useState("");
@@ -850,6 +850,14 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
       precio_tipo:    form.precio_tipo || "publico",
       pvp_override_adulto: Number(form.pvp_override_adulto) > 0 ? Number(form.pvp_override_adulto) : null,
       pvp_override_nino:   Number(form.pvp_override_nino)   > 0 ? Number(form.pvp_override_nino)   : null,
+      // Pre-selección de menú por pasajero (opcional, se muestra en /zarpe-grupo)
+      preseleccion_menu:   !!form.preseleccion_menu,
+      menu_platos_fuertes: !!form.preseleccion_menu
+        ? String(form.menu_platos_fuertes || "").split("\n").map(s => s.trim()).filter(Boolean)
+        : [],
+      menu_postres:        !!form.preseleccion_menu
+        ? String(form.menu_postres || "").split("\n").map(s => s.trim()).filter(Boolean)
+        : [],
     };
     let savedId = evento?.id;
     let dbError = null;
@@ -1791,6 +1799,43 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
             <textarea value={form.notas} onChange={e => set("notas", e.target.value)} rows={2}
               style={{ ...IS, resize: "vertical" }} placeholder="Requerimientos especiales, observaciones..." />
           </div>
+
+          {/* ── Pre-selección de menú — grupos (opcional) ── */}
+          {isGrupo && (
+            <div style={{ borderTop: `1px solid ${B.navyLight}`, paddingTop: 16 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", marginBottom: 10 }}>
+                <input type="checkbox" checked={!!form.preseleccion_menu}
+                  onChange={e => set("preseleccion_menu", e.target.checked)}
+                  style={{ width: 18, height: 18, cursor: "pointer" }} />
+                <span style={{ fontSize: 13, fontWeight: 700, color: B.sand }}>
+                  🍽 El grupo quiere pre-seleccionar su comida
+                </span>
+              </label>
+              {form.preseleccion_menu && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div>
+                    <label style={LS}>Opciones de Plato Fuerte</label>
+                    <textarea rows={5}
+                      value={form.menu_platos_fuertes || ""}
+                      onChange={e => set("menu_platos_fuertes", e.target.value)}
+                      placeholder="Una opción por línea, ej:&#10;Pesca del día&#10;Pollo grillado&#10;Pasta vegetariana"
+                      style={{ ...IS, resize: "vertical", fontFamily: "monospace", fontSize: 12 }} />
+                  </div>
+                  <div>
+                    <label style={LS}>Opciones de Postre</label>
+                    <textarea rows={5}
+                      value={form.menu_postres || ""}
+                      onChange={e => set("menu_postres", e.target.value)}
+                      placeholder="Una opción por línea, ej:&#10;Cheesecake&#10;Tres leches&#10;Fruta fresca"
+                      style={{ ...IS, resize: "vertical", fontFamily: "monospace", fontSize: 12 }} />
+                  </div>
+                  <div style={{ gridColumn: "1 / -1", fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+                    Cada invitado verá 2 dropdowns con estas opciones al llenar sus datos en /zarpe-grupo.
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ── Zarpe Grupal — solo organizador editando grupo existente ── */}
           {isGrupo && isEdit && form.modalidad_pago === "organizador" && (() => {
