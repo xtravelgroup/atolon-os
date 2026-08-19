@@ -1434,8 +1434,11 @@ function ReservaDetalle({ reserva: r0, onClose, onUpdated, isMobile, salidaList 
                   )}
                 </div>
 
-                {/* Toggle Precio Público ↔ Neto (solo al editar, si hay aliado o F&F) */}
-                {editing && (form.aliado_id || form.canal === "Friends & Family") && (
+                {/* Toggle Precio Público ↔ Neto: siempre visible al editar.
+                    Útil para reservas B2B donde el operador necesita cambiar de
+                    Neto → PVP (facturar precio público al cliente final) o de
+                    PVP → Neto (cobrar solo la tarifa negociada con la agencia). */}
+                {editing && (
                   <div style={{ gridColumn: "1 / -1" }}>
                     <label style={LS}>Tarifa</label>
                     <div style={{ display: "flex", gap: 6 }}>
