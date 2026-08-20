@@ -566,7 +566,12 @@ export default function ZarpeGrupo() {
                           />
                         </div>
                       </div>
-                      {/* Pre-selección de menú (si el grupo lo activó) */}
+                      {/* Pre-selección de menú (si el grupo lo activó).
+                          NOTA: <option> style con background/color explícito.
+                          Safari/Firefox/Chrome en algunos OS no heredan el
+                          color del <select> dentro del popup nativo, y quedan
+                          las opciones en blanco sobre blanco (texto invisible).
+                          Forzar contraste evita el bug de dropdown "vacío". */}
                       {evento.preseleccion_menu && (
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 4, paddingTop: 10, borderTop: `1px dashed ${C.border}` }}>
                           <div>
@@ -577,9 +582,9 @@ export default function ZarpeGrupo() {
                               value={d.plato_fuerte || ""}
                               onChange={e => setPax(s.slot_id, "plato_fuerte", e.target.value)}
                               style={IS}>
-                              <option value="">— Selecciona —</option>
+                              <option value="" style={{ background: "#fff", color: "#000" }}>— Selecciona —</option>
                               {(evento.menu_platos_fuertes || []).map(opt => (
-                                <option key={opt} value={opt}>{opt}</option>
+                                <option key={opt} value={opt} style={{ background: "#fff", color: "#000" }}>{opt}</option>
                               ))}
                             </select>
                           </div>
@@ -591,9 +596,9 @@ export default function ZarpeGrupo() {
                               value={d.postre || ""}
                               onChange={e => setPax(s.slot_id, "postre", e.target.value)}
                               style={IS}>
-                              <option value="">— Selecciona —</option>
+                              <option value="" style={{ background: "#fff", color: "#000" }}>— Selecciona —</option>
                               {(evento.menu_postres || []).map(opt => (
-                                <option key={opt} value={opt}>{opt}</option>
+                                <option key={opt} value={opt} style={{ background: "#fff", color: "#000" }}>{opt}</option>
                               ))}
                             </select>
                           </div>
