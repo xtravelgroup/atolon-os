@@ -116,6 +116,11 @@ export default function ZarpeGrupo() {
   const allSlots = buildSlots(evento.pasadias_org);
 
   // Determine which slots to show
+  //   tok  → solo los slots de esa invitación (cada invitado llena lo suyo)
+  //   !tok → organizador. Solo ve los slots NO asignados a ninguna invitación,
+  //          para no duplicar trabajo con lo que están llenando los invitados.
+  //          Los slots asignados aparecen resumidos en el card "Invitaciones"
+  //          con contador N/M por cada invitación.
   let mySlots = allSlots;
   let invitadoLabel = "";
   if (tok) {
@@ -123,6 +128,9 @@ export default function ZarpeGrupo() {
     if (!inv) return <Wrap><div style={{ textAlign: "center", color: C.danger, padding: 60 }}>Invitación no encontrada</div></Wrap>;
     mySlots = allSlots.filter(s => (inv.slot_ids || []).includes(s.slot_id));
     invitadoLabel = inv.label || "";
+  } else {
+    const asignados = new Set((evento.invitados_zarpe || []).flatMap(inv => inv.slot_ids || []));
+    mySlots = allSlots.filter(s => !asignados.has(s.slot_id));
   }
 
   const setPax = (slot_id, field, value) =>
