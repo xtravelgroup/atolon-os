@@ -78,6 +78,11 @@ export default function ZarpeGrupo() {
   const [kioskIdx,     setKioskIdx]     = useState(0); // index in emptySlots
   const [kioskDone,    setKioskDone]    = useState(false);
   const [kioskForm,    setKioskForm]    = useState({ nombre: "", identificacion: "", nacionalidad: "Colombiana" });
+  // Invitaciones (solo para el organizador — vista sin token)
+  const [invLabel,     setInvLabel]     = useState("");
+  const [invSlots,     setInvSlots]     = useState("1");
+  const [invCreating,  setInvCreating]  = useState(false);
+  const [copiedInv,    setCopiedInv]    = useState("");
 
   useEffect(() => {
     if (!eventoId) { setError("Link inválido"); setLoading(false); return; }
@@ -135,6 +140,40 @@ export default function ZarpeGrupo() {
     const d = paxDict[s.slot_id];
     return d?.nombre?.trim() && d?.identificacion?.trim();
   });
+
+  // ── Invitaciones (solo el organizador, vista sin tok) ─────────────────
+  const invitados = evento.invitados_zarpe || [];
+  const assignedIds = invitados.flatMap(inv => inv.slot_ids || []);
+  const disponibles = allSlots.filter(s => !assignedIds.includes(s.slot_id)).length;
+
+  const crearInvitacion = async () => {
+    const n = Number(invSlots);
+    const lbl = invLabel.trim();
+    if (!lbl || n < 1 || n > disponibles) return;
+    setInvCreating(true);
+    const tokNuevo = Math.random().toString(36).substring(2, 10);
+    const unassigned = allSlots.filter(s => !assignedIds.includes(s.slot_id)).slice(0, n);
+    const nuevaInv = { id: `INV-${Date.now()}`, label: lbl, slot_ids: unassigned.map(s => s.slot_id), tok: tokNuevo };
+    const updated = [...invitados, nuevaInv];
+    await supabase.from("eventos").update({ invitados_zarpe: updated }).eq("id", eventoId);
+    setEvento(e => ({ ...e, invitados_zarpe: updated }));
+    setInvLabel("");
+    setInvSlots("1");
+    setInvCreating(false);
+  };
+
+  const eliminarInvitacion = async (id) => {
+    if (!confirm("¿Eliminar esta invitación? Los cupos volverán a estar disponibles.")) return;
+    const updated = invitados.filter(i => i.id !== id);
+    await supabase.from("eventos").update({ invitados_zarpe: updated }).eq("id", eventoId);
+    setEvento(e => ({ ...e, invitados_zarpe: updated }));
+  };
+
+  const copyInvLink = (url) => {
+    navigator.clipboard.writeText(url);
+    setCopiedInv(url);
+    setTimeout(() => setCopiedInv(""), 2000);
+  };
 
   const completados = allSlots.filter(s => paxDict[s.slot_id]?.nombre?.trim()).length;
 
@@ -337,6 +376,103 @@ export default function ZarpeGrupo() {
           <div>🆔 Traer documento de identidad original</div>
           <div style={{ color: "#F87171", fontWeight: 600 }}>🚫 No se permite el ingreso de alimentos ni bebidas a Atolón Beach Club</div>
         </div>
+
+        {/* ── Invitaciones (solo el organizador, vista sin tok) ─────────── */}
+        {!tok && allSlots.length > 0 && (
+          <div style={{ background: C.bgCard, borderRadius: 14, padding: 16, border: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 12, color: C.sand, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 700, marginBottom: 12 }}>
+              ✉ Invitaciones
+            </div>
+            <div style={{ fontSize: 12, color: C.textMid, marginBottom: 14, lineHeight: 1.5 }}>
+              Crea invitaciones para que cada persona/familia llene solo sus datos. Compartes el link y ellos completan su parte.
+            </div>
+
+            {/* Form crear */}
+            <div style={{ background: C.bgLight, borderRadius: 10, padding: 12, marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: C.text, fontWeight: 700, marginBottom: 8 }}>
+                + Crear invitación ({disponibles} {disponibles === 1 ? "cupo disponible" : "cupos disponibles"})
+              </div>
+              <div style={{ display: "flex", gap: 8, flexDirection: "column" }}>
+                <input
+                  value={invLabel}
+                  onChange={e => setInvLabel(e.target.value)}
+                  placeholder="Nombre / grupo (ej: Familia García)"
+                  style={IS}
+                />
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    type="number" min="1" max={disponibles}
+                    value={invSlots}
+                    onChange={e => setInvSlots(e.target.value)}
+                    style={{ ...IS, width: 80, textAlign: "center" }}
+                  />
+                  <button
+                    onClick={crearInvitacion}
+                    disabled={invCreating || !invLabel.trim() || Number(invSlots) < 1 || Number(invSlots) > disponibles}
+                    style={{
+                      flex: 1, padding: "10px 14px", borderRadius: 8, border: "none",
+                      background: (!invLabel.trim() || Number(invSlots) < 1 || Number(invSlots) > disponibles) ? "rgba(200,185,154,0.18)" : C.sand,
+                      color:  (!invLabel.trim() || Number(invSlots) < 1 || Number(invSlots) > disponibles) ? C.textLight : C.bg,
+                      fontSize: 13, fontWeight: 700, cursor: "pointer",
+                    }}>
+                    {invCreating ? "Creando..." : "Crear →"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Lista invitaciones existentes */}
+            {invitados.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 10, color: C.textLight, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 }}>
+                  Invitaciones enviadas
+                </div>
+                {invitados.map(inv => {
+                  const invUrl = `${window.location.origin}/zarpe-grupo?ev=${eventoId}&tok=${inv.tok}`;
+                  const filled = (inv.slot_ids || []).filter(sid => (evento.zarpe_data || []).some(z => z.slot_id === sid && z.nombre?.trim())).length;
+                  const total = inv.slot_ids?.length || 0;
+                  const completa = filled === total && total > 0;
+                  return (
+                    <div key={inv.id} style={{
+                      background: C.bgLight, borderRadius: 10, padding: "10px 12px",
+                      display: "flex", alignItems: "center", gap: 8, fontSize: 12,
+                      border: `1px solid ${completa ? "rgba(52,211,153,0.25)" : C.border}`,
+                    }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {inv.label}
+                        </div>
+                        <div style={{ fontSize: 10, color: completa ? C.success : C.textMid, marginTop: 1 }}>
+                          {filled}/{total} pasajeros{completa ? " ✓" : ""}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => copyInvLink(invUrl)}
+                        style={{
+                          padding: "6px 12px", borderRadius: 7, border: `1px solid ${C.border}`,
+                          background: copiedInv === invUrl ? "rgba(52,211,153,0.15)" : "transparent",
+                          color: copiedInv === invUrl ? C.success : C.textMid,
+                          fontSize: 11, fontWeight: 700, cursor: "pointer",
+                        }}>
+                        {copiedInv === invUrl ? "✓ Copiado" : "🔗 Copiar"}
+                      </button>
+                      <button
+                        onClick={() => eliminarInvitacion(inv.id)}
+                        title="Eliminar invitación"
+                        style={{
+                          padding: "6px 10px", borderRadius: 7, border: `1px solid ${C.danger}44`,
+                          background: "transparent", color: C.danger,
+                          fontSize: 12, fontWeight: 700, cursor: "pointer",
+                        }}>
+                        ✕
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── Formulario de pasajeros ── */}
         {saved ? (
