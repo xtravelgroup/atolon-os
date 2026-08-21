@@ -77,12 +77,11 @@ export default function Compras() {
 
   const reload = async () => {
     setLoading(true);
-    // Performance: limitar OCs y entregas a los últimos 90 días para no
-    // descargar todo el histórico cada vez que se entra al módulo.
-    // Cerradas/canceladas más antiguas se pueden buscar via filtros.
-    const noventaDiasAtras = new Date(Date.now() - 90 * 86400 * 1000).toISOString();
+    // Traemos TODO el histórico de OCs (contabilidad las necesita para
+    // reconciliar). Con ~500 OCs totales el fetch es liviano; si crece
+    // mucho, poner paginación en la UI antes que recortar el histórico.
     const [oc, em, ta, zf, rq, pv] = await Promise.all([
-      supabase.from("ordenes_compra").select("*").gte("created_at", noventaDiasAtras).order("created_at", { ascending: false }).limit(500),
+      supabase.from("ordenes_compra").select("*").order("created_at", { ascending: false }).limit(5000),
       supabase.from("oc_entregas_muelle").select("*").gte("fecha_programada", todayStr()).order("fecha_programada", { ascending: true }).limit(200),
       supabase.from("oc_transporte_atolon").select("*").gte("fecha_zarpe", todayStr()).order("fecha_zarpe", { ascending: true }).limit(200),
       supabase.from("muelle_zarpes_flota").select("*").gte("fecha", todayStr()).order("fecha", { ascending: true }).limit(20),
