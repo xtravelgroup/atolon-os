@@ -1990,19 +1990,29 @@ function ReporteTransacciones() {
   const load = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
-    // Reservas con pago realizado en el rango (por fecha_pago O por created_at si no tiene fecha_pago)
-    const { data: resRows } = await supabase
-      .from("reservas")
-      .select("id, fecha, fecha_pago, nombre, email, contacto, total, abono, forma_pago, canal, estado, created_at, pagos, aliado_id")
-      .gt("abono", 0)
-      .neq("estado", "cancelado")
-      .order("fecha_pago", { ascending: false, nullsFirst: false });
+    // Fuentes de pagos:
+    //  1) reservas.pagos[] (o abono directo) — reservas individuales, pasadías
+    //  2) eventos.pagos[] — pagos de grupos con modalidad_pago="organizador"
+    //     (viven en el evento, NO en la reserva GRP-ORG). Antes se perdían.
+    const [resR, evR] = await Promise.all([
+      supabase.from("reservas")
+        .select("id, fecha, fecha_pago, nombre, email, contacto, total, abono, forma_pago, canal, estado, created_at, pagos, aliado_id")
+        .gt("abono", 0)
+        .neq("estado", "cancelado")
+        .order("fecha_pago", { ascending: false, nullsFirst: false }),
+      supabase.from("eventos")
+        .select("id, nombre, fecha, categoria, stage, pagos, aliado_id")
+        .not("pagos", "is", null)
+        .neq("stage", "Cancelado")
+        .neq("stage", "Perdido"),
+    ]);
+    const resRows = resR.data || [];
+    const evRows  = evR.data  || [];
 
     const list = [];
-    (resRows || []).forEach(r => {
+    resRows.forEach(r => {
       const pagos = Array.isArray(r.pagos) && r.pagos.length > 0 ? r.pagos : null;
       if (pagos) {
-        // Una transacción por cada entrada en pagos[]
         pagos.forEach(p => {
           const fecha = (p.fecha || r.fecha_pago || r.created_at?.slice(0, 10) || "").slice(0, 10);
           if (fecha < fechaIni || fecha > fechaFin) return;
@@ -2035,6 +2045,28 @@ function ReporteTransacciones() {
           es_cortesia: r.forma_pago === "Cortesía",
         });
       }
+    });
+    // Pagos de eventos (grupos con organizador). Cada entry de eventos.pagos
+    // se mapea como transacción independiente. Usamos evento.id como
+    // "reserva_id" para poder abrir el evento después.
+    evRows.forEach(ev => {
+      const pagos = Array.isArray(ev.pagos) ? ev.pagos : [];
+      pagos.forEach(p => {
+        const fecha = (p.fecha || "").slice(0, 10);
+        if (!fecha || fecha < fechaIni || fecha > fechaFin) return;
+        list.push({
+          fecha,
+          reserva_id: ev.id,
+          cliente: ev.nombre || "(sin nombre)",
+          email: "—",
+          monto: Number(p.monto) || 0,
+          proveedor: normProveedor(p.forma_pago || "Otro"),
+          canal: "EVENTO-GRUPO",
+          reference: p.id || "—",
+          estado: ev.stage,
+          es_cortesia: false,
+        });
+      });
     });
     setTransacciones(list);
     setLoading(false);
