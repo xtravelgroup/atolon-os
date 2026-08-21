@@ -502,6 +502,28 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
     ? { ...FE_EMPTY, ...evento, pax: String(evento.pax || ""), valor: String(evento.valor || ""), aliado_id: evento.aliado_id || "", vendedor: evento.vendedor || "", salidas_grupo: evento.salidas_grupo || [], buy_out: evento.buy_out || false, modalidad_pago: evento.modalidad_pago || "individual", pasadias_org: evento.pasadias_org || [], precio_tipo: evento.precio_tipo || "publico", fecha_fin: evento.fecha_fin || "", buy_out_fechas: evento.buy_out_fechas || [], pvp_override_adulto: evento.pvp_override_adulto || "", pvp_override_nino: evento.pvp_override_nino || "", preseleccion_menu: evento.preseleccion_menu || false, menu_platos_fuertes: Array.isArray(evento.menu_platos_fuertes) ? evento.menu_platos_fuertes.join("\n") : (evento.menu_platos_fuertes || ""), menu_postres: Array.isArray(evento.menu_postres) ? evento.menu_postres.join("\n") : (evento.menu_postres || "") }
     : { nombre: "", tipo: tiposOpt[0], fecha: "", fecha_fin: "", pax: "", valor: "", aliado_id: "", vendedor: "", salidas_grupo: [], contacto: "", tel: "", email: "", empresa: "", nit: "", cargo: "", direccion: "", nacionalidad: "", montaje: "", hora_ini: "", hora_fin: "", vencimiento: "", stage: "Consulta", notas: "", categoria, buy_out: false, buy_out_fechas: [], modalidad_pago: "individual", pasadias_org: [], precio_tipo: "publico", pvp_override_adulto: "", pvp_override_nino: "", preseleccion_menu: false, menu_platos_fuertes: "", menu_postres: "", ...FE_EMPTY });
   const setFE = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  // Al montar en modo edit, refrescamos el evento desde BD para garantizar
+  // que los campos fe_* (agregados en 2026-08-20) estén siempre presentes,
+  // aunque el objeto `evento` de la lista padre venga de un fetch previo
+  // que no los incluía. Merge no-destructivo: solo rellena lo que falta o
+  // vino cambiado en BD. Sin este refresh, editar/reeditar un grupo puede
+  // mostrar los FE vacíos aunque estén guardados.
+  useEffect(() => {
+    if (!isEdit || !evento?.id || !supabase) return;
+    supabase.from("eventos").select("*").eq("id", evento.id).single()
+      .then(({ data }) => {
+        if (!data) return;
+        setForm(f => ({ ...f, ...data,
+          pax: String(data.pax || ""),
+          valor: String(data.valor || ""),
+          menu_platos_fuertes: Array.isArray(data.menu_platos_fuertes) ? data.menu_platos_fuertes.join("\n") : (data.menu_platos_fuertes || ""),
+          menu_postres: Array.isArray(data.menu_postres) ? data.menu_postres.join("\n") : (data.menu_postres || ""),
+        }));
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evento?.id]);
+
   const [saving,          setSaving]          = useState(false);
   const [horaInput,       setHoraInput]       = useState("");
   const [aliadoSearch,    setAliadoSearch]    = useState("");

@@ -213,8 +213,11 @@ function ReporteFacturacionDiaria() {
           .select("id, nombre, fecha, total, abono, saldo, tipo, pax_a, pax_n, pax, forma_pago, canal, estado, aliado_id, email, telefono, fe_tipo_documento, fe_numero_documento, fe_razon_social, fe_nombres, fe_telefono, fe_estado, fe_numero_factura, fe_emitida_at, grupo_id")
           .eq("fecha", fecha)
           .neq("estado", "cancelado"),
+        // Traemos también columnas fe_* del evento — se propagan a las
+        // reservas GRP-ORG (wrappers de pago) del mismo grupo_id para que
+        // la facturación aparezca con los datos correctos.
         supabase.from("eventos")
-          .select("id, nombre, fecha, valor, valor_extras, pax, categoria, stage, nit, aliado_id, aliado_nombre")
+          .select("id, nombre, fecha, valor, valor_extras, pax, categoria, stage, nit, aliado_id, aliado_nombre, factura_electronica, fe_tipo_persona, fe_tipo_documento, fe_numero_documento, fe_dv, fe_razon_social, fe_nombres, fe_apellidos, fe_email, fe_telefono, fe_direccion, fe_ciudad, fe_departamento, fe_pais, fe_regimen")
           .eq("fecha", fecha)
           .in("stage", ["Confirmado", "Realizado"])
           .in("categoria", ["grupo", "evento"]),
@@ -231,7 +234,24 @@ function ReporteFacturacionDiaria() {
           .then(r => r.json()).catch(() => null),
       ]);
 
-      setReservas(resR.data || []);
+      // Merge: las reservas GRP-ORG (wrappers de pago del organizador) tienen
+      // sus datos de facturación electrónica en el EVENTO padre (grupo_id),
+      // no en la reserva. Los copiamos para que la vista muestre FE correcto.
+      const eventosById = Object.fromEntries((eveR.data || []).map(e => [e.id, e]));
+      const reservasMerged = (resR.data || []).map(r => {
+        if (!r.grupo_id) return r;
+        const ev = eventosById[r.grupo_id];
+        if (!ev || !ev.factura_electronica) return r;
+        return {
+          ...r,
+          fe_tipo_documento:   r.fe_tipo_documento   || ev.fe_tipo_documento,
+          fe_numero_documento: r.fe_numero_documento || ev.fe_numero_documento,
+          fe_razon_social:     r.fe_razon_social     || ev.fe_razon_social,
+          fe_nombres:          r.fe_nombres          || ev.fe_nombres,
+          fe_telefono:         r.fe_telefono         || ev.fe_telefono,
+        };
+      });
+      setReservas(reservasMerged);
       setEventos(eveR.data || []);
       setMuelle((muelleR.data || []).filter(m => !m.reserva_id));   // sin reserva = ingreso aparte
       setActividades(actR.data || []);
