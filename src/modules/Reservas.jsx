@@ -4193,6 +4193,11 @@ export default function Reservas() {
   };
 
   const filtered = reservas.filter(r => {
+    // Excluir wrappers de pago del organizador de grupo (canal GRUPO-ORG,
+    // id GRP-ORG-*). NO son reservas de pasajeros — son intentos de pago
+    // que el organizador genera para su evento y viven bajo el evento
+    // mismo. Aparecían duplicados como "reservas" separadas en el listado.
+    if (r.canal === "GRUPO-ORG" || String(r.id || "").startsWith("GRP-ORG-")) return false;
     const matchSearch = r.nombre.toLowerCase().includes(search.toLowerCase()) ||
                         r.id.toLowerCase().includes(search.toLowerCase()) ||
                         r.tipo.toLowerCase().includes(search.toLowerCase());
