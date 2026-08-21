@@ -850,6 +850,10 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
       precio_tipo:    form.precio_tipo || "publico",
       pvp_override_adulto: Number(form.pvp_override_adulto) > 0 ? Number(form.pvp_override_adulto) : null,
       pvp_override_nino:   Number(form.pvp_override_nino)   > 0 ? Number(form.pvp_override_nino)   : null,
+      // Datos de facturación electrónica (fe_*): se mezclaban en `form` vía
+      // setFE(), pero el payload no los enviaba al UPDATE → se perdían al
+      // guardar la edición. fePayload() extrae solo los campos fe_* válidos.
+      ...fePayload(form),
       // Pre-selección de menú por pasajero (opcional, se muestra en /zarpe-grupo)
       preseleccion_menu:   !!form.preseleccion_menu,
       menu_platos_fuertes: !!form.preseleccion_menu
