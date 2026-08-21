@@ -2000,11 +2000,12 @@ function ReporteTransacciones() {
         .gt("abono", 0)
         .neq("estado", "cancelado")
         .order("fecha_pago", { ascending: false, nullsFirst: false }),
+      // NO filtrar por stage: los pagos que ya ingresaron son transacciones
+      // reales que ocurrieron. Aunque el evento después se cancele o marque
+      // "Perdido", el reporte debe mostrarlo (queda con estado del evento).
       supabase.from("eventos")
         .select("id, nombre, fecha, categoria, stage, pagos, aliado_id")
-        .not("pagos", "is", null)
-        .neq("stage", "Cancelado")
-        .neq("stage", "Perdido"),
+        .not("pagos", "is", null),
     ]);
     const resRows = resR.data || [];
     const evRows  = evR.data  || [];
