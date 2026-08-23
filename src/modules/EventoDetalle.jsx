@@ -3644,7 +3644,7 @@ function TabPagos({ pagos = [], onChange, totalGrupo = 0, eventoId = null, descu
 const CATS_AB = ["Menú Restaurante", "Menú Bebidas", "Menú Banquetes"];
 const CATS_AB_TIPO = { "Menú Restaurante": "restaurant", "Menú Bebidas": "bebidas", "Menú Banquetes": "banquetes" };
 
-function TabMenus({ servicios, menusDetalle, onChange, cotizacionData, timelineItems = [] }) {
+function TabMenus({ servicios, menusDetalle, onChange, cotizacionData, timelineItems = [], preseleccionMenu = false, menuPlatosFuertes = [], menuPostres = [], zarpeData = [] }) {
   // Use servicios_contratados A&B. Add rundown "servicio" blocks as synthetic services so each F&B moment across all days appears.
   // Dedupe: contracted services that are already linked to a rundown block are hidden (the block represents them)
   const linkedIds = new Set();
@@ -3829,8 +3829,73 @@ function TabMenus({ servicios, menusDetalle, onChange, cotizacionData, timelineI
   })).filter(s => s._platos.length > 0);
   const totalPlatosSeleccionados = resumenServicios.reduce((sum, s) => sum + s._platos.length, 0);
 
+  // ── Resumen preselección de invitados (zarpe_data) ─────────────────
+  // Cuando el grupo activa "preseleccion_menu", cada pasajero en el link
+  // /zarpe-grupo selecciona plato_fuerte + postre. Aquí agregamos el conteo
+  // en vivo para que el equipo de cocina/servicio sepa cuántos hay de cada.
+  const preseleccionResumen = (() => {
+    if (!preseleccionMenu) return null;
+    const pf = {}, po = {};
+    let totalCompletados = 0;
+    for (const z of (zarpeData || [])) {
+      if (z.plato_fuerte) { pf[z.plato_fuerte] = (pf[z.plato_fuerte] || 0) + 1; totalCompletados++; }
+      if (z.postre)       { po[z.postre]       = (po[z.postre]       || 0) + 1; }
+    }
+    const asRows = (dict, opts) => {
+      const rows = opts.map(opt => ({ nombre: opt, cant: dict[opt] || 0 }));
+      const extras = Object.keys(dict).filter(k => !opts.includes(k)).map(k => ({ nombre: k + " (fuera de menú)", cant: dict[k] }));
+      return [...rows, ...extras].sort((a, b) => b.cant - a.cant);
+    };
+    return {
+      totalCompletados,
+      totalZarpe: (zarpeData || []).length,
+      platosFuertes: asRows(pf, menuPlatosFuertes || []),
+      postres: asRows(po, menuPostres || []),
+    };
+  })();
+
   return (
     <div>
+      {/* ── Preselección de invitados (via /zarpe-grupo) ── */}
+      {preseleccionResumen && (
+        <div style={{ background: "rgba(52,211,153,0.06)", borderRadius: 12, padding: "16px 20px", marginBottom: 16, border: "1px solid rgba(52,211,153,0.25)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#34d399" }}>
+              🍽 Preselección de invitados
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 400, marginLeft: 8 }}>
+                ({preseleccionResumen.totalCompletados} pasajero{preseleccionResumen.totalCompletados !== 1 ? "s" : ""} han elegido)
+              </span>
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#a3e635", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Plato Fuerte</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {preseleccionResumen.platosFuertes.length === 0 && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>— sin opciones definidas —</div>}
+                {preseleccionResumen.platosFuertes.map(r => (
+                  <div key={r.nombre} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderRadius: 8, background: r.cant > 0 ? B.navy : "transparent" }}>
+                    <span style={{ fontSize: 12, color: r.cant > 0 ? B.white : "rgba(255,255,255,0.4)" }}>{r.nombre}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: r.cant > 0 ? "#34d399" : "rgba(255,255,255,0.3)", fontFamily: "'Barlow Condensed', sans-serif" }}>{r.cant}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#fbbf24", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Postre</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {preseleccionResumen.postres.length === 0 && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>— sin opciones definidas —</div>}
+                {preseleccionResumen.postres.map(r => (
+                  <div key={r.nombre} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderRadius: 8, background: r.cant > 0 ? B.navy : "transparent" }}>
+                    <span style={{ fontSize: 12, color: r.cant > 0 ? B.white : "rgba(255,255,255,0.4)" }}>{r.nombre}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: r.cant > 0 ? "#fbbf24" : "rgba(255,255,255,0.3)", fontFamily: "'Barlow Condensed', sans-serif" }}>{r.cant}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Resumen siempre visible ── */}
       {totalPlatosSeleccionados > 0 && (
         <div style={{ background: B.navyMid, borderRadius: 12, padding: "16px 20px", marginBottom: 16, border: `1px solid ${B.sand}44` }}>
@@ -4732,7 +4797,7 @@ export default function EventoDetalle({ evento: inicial, canEdit = true, onBack,
         return <TabTimeline items={evento.timeline_items||[]} onChange={v => updateLocal("timeline_items", v)} transportes={evento.transporte_detalle||[]} usuarios={usuariosList} serviciosAB={sAB} embarcacionesEvento={evento.embarcaciones_evento||[]} evento={evento} readOnly={!efectivoCanEdit} />;
       })()}
       {tab === "servicios" && <TabServicios  items={evento.servicios_contratados||[]}     onChange={v => updateLocal("servicios_contratados", v)} pasadiasOrg={evento.pasadias_org||[]} onChangePasadias={vistaOperativa ? null : v => updateLocal("pasadias_org", v)} categoria={evento.categoria} precioTipo={evento.precio_tipo||"publico"} pasadiasMap={pasadiasMap} cotizacionData={evento.cotizacion_data||null} eventoId={evento.id} eventoFecha={evento.fecha} eventoNombre={evento.nombre} evento={evento} ocultarPrecios={vistaOperativa} />}
-      {tab === "menus"     && <TabMenus     servicios={evento.servicios_contratados||[]} menusDetalle={evento.menus_detalle||{}} onChange={v => updateLocal("menus_detalle", v)} cotizacionData={evento.cotizacion_data||null} timelineItems={evento.timeline_items||[]} />}
+      {tab === "menus"     && <TabMenus     servicios={evento.servicios_contratados||[]} menusDetalle={evento.menus_detalle||{}} onChange={v => updateLocal("menus_detalle", v)} cotizacionData={evento.cotizacion_data||null} timelineItems={evento.timeline_items||[]} preseleccionMenu={!!evento.preseleccion_menu} menuPlatosFuertes={evento.menu_platos_fuertes||[]} menuPostres={evento.menu_postres||[]} zarpeData={evento.zarpe_data||[]} />}
       {tab === "openbar"   && <TabOpenBar      evento={evento} ocultarPrecios={vistaOperativa} />}
       {tab === "gastos"    && <TabGastosServicios evento={evento} ocultarPrecios={vistaOperativa} />}
       {tab === "asignaciones" && <TabAsignaciones timelineItems={evento.timeline_items||[]} />}
