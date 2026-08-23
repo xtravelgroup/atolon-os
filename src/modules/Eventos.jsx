@@ -3472,6 +3472,11 @@ export default function Eventos() {
   const [extrasGrupo, setExtrasGrupo] = useState(null);
   const [userRol,     setUserRol]     = useState("");
   const [vistaOperativa, setVistaOperativa] = useState(false);
+  // Filtro histórico: cuántos días atrás mostrar de Realizados/Perdidos.
+  // Los otros stages (Consulta/Cotizado/Confirmado) siempre visibles porque
+  // son oportunidades activas. Realizados/Perdidos se acumulan → sin filtro
+  // ensucian el pipeline visualmente. Default: 30 días.
+  const [historicoDias, setHistoricoDias] = useState(30);
 
   // Detectar rol del usuario para permisos de edición.
   // Vista operativa (cocina/maitre): solo ven eventos confirmados, no editan.
@@ -3532,6 +3537,23 @@ export default function Eventos() {
           .update({ stage: "Realizado" })
           .in("id", vencidos.map(e => e.id));
         vencidos.forEach(e => { e.stage = "Realizado"; });
+      }
+    }
+
+    // Auto-pasar Consulta/Cotizado → Perdido cuando la fecha del evento ya
+    // pasó (nunca se confirmó → oportunidad perdida). Sin este auto-cierre,
+    // el pipeline se ensucia con oportunidades viejas que ya expiraron.
+    if (evtR.data) {
+      const perdidos = evtR.data.filter(e => {
+        if (e.stage !== "Consulta" && e.stage !== "Cotizado") return false;
+        const fechaFin = (e.fecha_fin && e.fecha_fin > e.fecha) ? e.fecha_fin : e.fecha;
+        return fechaFin && fechaFin < hoy;
+      });
+      if (perdidos.length > 0) {
+        await supabase.from("eventos")
+          .update({ stage: "Perdido" })
+          .in("id", perdidos.map(e => e.id));
+        perdidos.forEach(e => { e.stage = "Perdido"; });
       }
     }
 
@@ -3620,9 +3642,23 @@ export default function Eventos() {
   const isCalendario = tab === "calendario";
   // Vista operativa: solo eventos/grupos confirmados (cocina necesita ver
   // lo que está aprobado para preparar, no consultas/cotizados).
-  const todosVisible = vistaOperativa
+  // Además: recortar Realizados/Perdidos a los últimos `historicoDias` días
+  // para no ensuciar el pipeline con histórico viejo. historicoDias === 0
+  // significa "sin filtro" (mostrar todos).
+  const cutoffHistorico = (() => {
+    if (!historicoDias || historicoDias <= 0) return null;
+    const d = new Date(); d.setDate(d.getDate() - historicoDias);
+    return d.toISOString().slice(0, 10);
+  })();
+  const dentroDelRango = (e) => {
+    if (!cutoffHistorico) return true;
+    if (e.stage !== "Realizado" && e.stage !== "Perdido") return true;
+    const f = e.fecha_fin && e.fecha_fin > e.fecha ? e.fecha_fin : e.fecha;
+    return (f || "9999") >= cutoffHistorico;
+  };
+  const todosVisible = (vistaOperativa
     ? todos.filter(e => e.stage === "Confirmado" || e.stage === "Realizado")
-    : todos;
+    : todos).filter(dentroDelRango);
   const items   = tab === "todos" ? todosVisible : todosVisible.filter(e => e.categoria === tab);
   const isGrupo = tab === "grupo";
   const TABS    = [
@@ -3648,16 +3684,39 @@ export default function Eventos() {
         )}
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 24, background: B.navyMid, borderRadius: 10, padding: 4, width: "fit-content" }}>
-        {TABS.map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)}
-            style={{ padding: "8px 20px", borderRadius: 7, border: "none", fontWeight: 600, fontSize: 13, cursor: "pointer",
-              background: tab === t.key ? B.navy : "transparent",
-              color: tab === t.key ? B.white : "rgba(255,255,255,0.45)" }}>
-            {t.label}
-          </button>
-        ))}
+      {/* Tabs + Filtro de histórico Realizados/Perdidos */}
+      <div style={{ display: "flex", gap: 12, marginBottom: 24, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 4, background: B.navyMid, borderRadius: 10, padding: 4, width: "fit-content" }}>
+          {TABS.map(t => (
+            <button key={t.key} onClick={() => setTab(t.key)}
+              style={{ padding: "8px 20px", borderRadius: 7, border: "none", fontWeight: 600, fontSize: 13, cursor: "pointer",
+                background: tab === t.key ? B.navy : "transparent",
+                color: tab === t.key ? B.white : "rgba(255,255,255,0.45)" }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {!isCalendario && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, background: B.navyMid, borderRadius: 10, padding: "6px 12px" }}>
+            <span style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700 }}>
+              📅 Realizados/Perdidos
+            </span>
+            <select
+              value={historicoDias}
+              onChange={e => setHistoricoDias(Number(e.target.value))}
+              style={{ padding: "6px 10px", borderRadius: 7, border: `1px solid ${B.navyLight}`, background: B.navy, color: B.white, fontSize: 12, cursor: "pointer", outline: "none" }}
+            >
+              <option value={7}>Últimos 7 días</option>
+              <option value={15}>Últimos 15 días</option>
+              <option value={30}>Últimos 30 días</option>
+              <option value={60}>Últimos 60 días</option>
+              <option value={90}>Últimos 90 días</option>
+              <option value={180}>Últimos 6 meses</option>
+              <option value={365}>Último año</option>
+              <option value={0}>Todos</option>
+            </select>
+          </div>
+        )}
       </div>
 
       {/* KPIs — ocultos en vista operativa (no necesitan ver pipeline/$) */}
