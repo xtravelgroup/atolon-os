@@ -3830,20 +3830,25 @@ function TabMenus({ servicios, menusDetalle, onChange, cotizacionData, timelineI
   const totalPlatosSeleccionados = resumenServicios.reduce((sum, s) => sum + s._platos.length, 0);
 
   // ── Resumen preselección de invitados (zarpe_data) ─────────────────
-  // Cuando el grupo activa "preseleccion_menu", cada pasajero en el link
-  // /zarpe-grupo selecciona plato_fuerte + postre. Aquí agregamos el conteo
-  // en vivo para que el equipo de cocina/servicio sepa cuántos hay de cada.
+  // Cuando los pasajeros llenan sus datos en /zarpe-grupo eligen plato_fuerte
+  // y postre. Aquí agregamos el conteo en vivo para cocina/servicio.
+  // Se muestra si el grupo tiene preseleccion_menu=true O si hay AL MENOS 1
+  // selección en zarpe_data (por si el toggle se desactivó pero ya hay datos).
+  // Si menuPlatosFuertes/menuPostres están vacíos, usamos las opciones únicas
+  // que efectivamente eligieron los pasajeros.
   const preseleccionResumen = (() => {
-    if (!preseleccionMenu) return null;
     const pf = {}, po = {};
     let totalCompletados = 0;
     for (const z of (zarpeData || [])) {
       if (z.plato_fuerte) { pf[z.plato_fuerte] = (pf[z.plato_fuerte] || 0) + 1; totalCompletados++; }
       if (z.postre)       { po[z.postre]       = (po[z.postre]       || 0) + 1; }
     }
+    const hayData = Object.keys(pf).length > 0 || Object.keys(po).length > 0;
+    if (!preseleccionMenu && !hayData) return null;
     const asRows = (dict, opts) => {
-      const rows = opts.map(opt => ({ nombre: opt, cant: dict[opt] || 0 }));
-      const extras = Object.keys(dict).filter(k => !opts.includes(k)).map(k => ({ nombre: k + " (fuera de menú)", cant: dict[k] }));
+      const optList = (opts && opts.length > 0) ? opts : Object.keys(dict);
+      const rows = optList.map(opt => ({ nombre: opt, cant: dict[opt] || 0 }));
+      const extras = Object.keys(dict).filter(k => !optList.includes(k)).map(k => ({ nombre: k + " (fuera de menú)", cant: dict[k] }));
       return [...rows, ...extras].sort((a, b) => b.cant - a.cant);
     };
     return {
@@ -3851,6 +3856,7 @@ function TabMenus({ servicios, menusDetalle, onChange, cotizacionData, timelineI
       totalZarpe: (zarpeData || []).length,
       platosFuertes: asRows(pf, menuPlatosFuertes || []),
       postres: asRows(po, menuPostres || []),
+      sinToggle: !preseleccionMenu && hayData,
     };
   })();
 
