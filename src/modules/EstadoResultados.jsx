@@ -7,6 +7,7 @@ import { useState, useEffect, useMemo } from "react";
 import { supabase } from "../lib/supabase";
 import { B } from "../brand";
 import PnLDetalleModal from "../components/PnLDetalleModal.jsx";
+import { getAyBRango } from "../lib/loggroAyB";
 
 const MESES       = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const MESES_SHORT = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
@@ -35,18 +36,50 @@ export default function EstadoResultados() {
   const [cats, setCats] = useState([]);
   const [loading, setLoading] = useState(true);
   const [drillDown, setDrillDown] = useState(null); // { categoria, tipo, ytd }
+  // Ventas A&B por mes desde Loggro Restobar (fuente oficial). Sobrescribe
+  // el `actual` de la categoría "Alimentos y Bebidas" para que no dependa de
+  // que alguien edite a mano cada mes en Presupuesto.
+  const [aybMes, setAybMes] = useState({}); // { 0: 1234567, 1: 2345678, ... } en COP
 
   useEffect(() => {
     (async () => {
       setLoading(true);
       const { data } = await supabase.from("presupuesto_anual").select("*").eq("year", year).order("orden");
       setCats(data || []);
+      // Cargar ventas A&B de Loggro para todo el año (mes por mes). Loggro es
+      // la fuente oficial — antes A&B mostraba "—" en Estado de Resultados
+      // porque el actual manual en presupuesto_anual solo se llenó para abril.
+      try {
+        const from = `${year}-01-01`;
+        const to   = `${year}-12-31`;
+        const data = await getAyBRango(from, to);
+        const porDia = data?.por_dia || {};
+        const acc = {};
+        for (const [f, v] of Object.entries(porDia)) {
+          const m = parseInt(f.slice(5, 7), 10) - 1; // 0-based month
+          if (Number.isNaN(m)) continue;
+          acc[m] = (acc[m] || 0) + (Number(v?.ventas) || 0);
+        }
+        setAybMes(acc);
+      } catch (e) {
+        console.warn("[EstadoResultados] No se pudo cargar A&B Loggro:", e?.message);
+        setAybMes({});
+      }
       setLoading(false);
     })();
   }, [year]);
 
-  // Aplicar fórmulas (igual que en Presupuesto.jsx)
+  // Aplicar fórmulas (igual que en Presupuesto.jsx) + auto-sync A&B desde Loggro
   const catsFormula = useMemo(() => cats.map(c => {
+    // Sobrescribir actual de A&B con datos oficiales de Loggro (COP → millones)
+    if (c.categoria === "Alimentos y Bebidas" && Object.keys(aybMes).length > 0) {
+      const nuevoActual = Array.from({ length: 12 }, (_, i) => {
+        const cop = aybMes[i];
+        if (cop === undefined || cop === null) return c.actual?.[i] ?? null;
+        return Math.round((cop / 1_000_000) * 100) / 100; // COP → M con 2 decimales
+      });
+      c = { ...c, actual: nuevoActual, _autoLoggro: true };
+    }
     if (c.formula_pct && c.formula_source) {
       const src = cats.find(x => x.categoria === c.formula_source);
       if (src) {
@@ -56,7 +89,7 @@ export default function EstadoResultados() {
       }
     }
     return c;
-  }), [cats]);
+  }), [cats, aybMes]);
 
   // Helpers
   const mAt = (row, field, m) => {
@@ -320,6 +353,7 @@ function LineRow({ row, month, revenueMes, revenueYTD, mAt, ytdUpTo, isIncome, o
         {row.categoria}
         {clickable && <span style={{ marginLeft: 6, fontSize: 9, color: "rgba(255,255,255,0.3)" }}>🔍</span>}
         {row._isFormula && <span style={{ fontSize: 9, marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: B.warning + "22", color: B.warning, fontWeight: 700 }}>ƒ {row.formula_pct}%</span>}
+        {row._autoLoggro && <span style={{ fontSize: 9, marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: B.success + "22", color: B.success, fontWeight: 700 }}>🔄 Loggro</span>}
       </td>
       <td style={numClickable(onDrillMonth, numCell(mesHas ? B.white : "rgba(255,255,255,0.2)"))}
         onClick={() => mesHas && onDrillMonth?.()}
