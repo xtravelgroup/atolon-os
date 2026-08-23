@@ -3813,29 +3813,15 @@ function TabMenus({ servicios, menusDetalle, onChange, cotizacionData, timelineI
     return acc;
   }, {});
 
-  if (abServicios.length === 0) {
-    return (
-      <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-        No hay servicios de Alimentos y Bebidas contratados.<br />
-        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.15)" }}>Agrega servicios de tipo "Menú Restaurante", "Menú Bebidas" o "Menú Banquetes" en el tab Servicios.</span>
-      </div>
-    );
-  }
-
-  // Resumen total de platos por servicio (siempre visible)
-  const resumenServicios = abServicios.map(s => ({
-    ...s,
-    _platos: getPlatos(s.id),
-  })).filter(s => s._platos.length > 0);
-  const totalPlatosSeleccionados = resumenServicios.reduce((sum, s) => sum + s._platos.length, 0);
-
   // ── Resumen preselección de invitados (zarpe_data) ─────────────────
   // Cuando los pasajeros llenan sus datos en /zarpe-grupo eligen plato_fuerte
   // y postre. Aquí agregamos el conteo en vivo para cocina/servicio.
   // Se muestra si el grupo tiene preseleccion_menu=true O si hay AL MENOS 1
   // selección en zarpe_data (por si el toggle se desactivó pero ya hay datos).
-  // Si menuPlatosFuertes/menuPostres están vacíos, usamos las opciones únicas
-  // que efectivamente eligieron los pasajeros.
+  // IMPORTANTE: se calcula ANTES del early-return de "sin servicios A&B" para
+  // que también aparezca el card cuando el grupo aún no tiene menú contratado
+  // (caso Qubicaamf: los pasajeros ya eligieron via zarpe pero no hay servicio
+  // formal contratado en el evento).
   const preseleccionResumen = (() => {
     const pf = {}, po = {};
     let totalCompletados = 0;
@@ -3859,6 +3845,65 @@ function TabMenus({ servicios, menusDetalle, onChange, cotizacionData, timelineI
       sinToggle: !preseleccionMenu && hayData,
     };
   })();
+
+  // Empty-state cuando no hay servicios A&B contratados. Muestra el card de
+  // preselección arriba si hay data (no lo esconde aunque el evento aún no
+  // tenga menú formal contratado).
+  if (abServicios.length === 0) {
+    return (
+      <div>
+        {preseleccionResumen && (
+          <div style={{ background: "rgba(52,211,153,0.06)", borderRadius: 12, padding: "16px 20px", marginBottom: 16, border: "1px solid rgba(52,211,153,0.25)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#34d399" }}>
+                🍽 Preselección de invitados
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 400, marginLeft: 8 }}>
+                  ({preseleccionResumen.totalCompletados} pasajero{preseleccionResumen.totalCompletados !== 1 ? "s" : ""} han elegido)
+                </span>
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#a3e635", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Plato Fuerte</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {preseleccionResumen.platosFuertes.length === 0 && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>— sin opciones definidas —</div>}
+                  {preseleccionResumen.platosFuertes.map(r => (
+                    <div key={r.nombre} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderRadius: 8, background: r.cant > 0 ? B.navy : "transparent" }}>
+                      <span style={{ fontSize: 12, color: r.cant > 0 ? B.white : "rgba(255,255,255,0.4)" }}>{r.nombre}</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: r.cant > 0 ? "#34d399" : "rgba(255,255,255,0.3)", fontFamily: "'Barlow Condensed', sans-serif" }}>{r.cant}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#fbbf24", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Postre</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {preseleccionResumen.postres.length === 0 && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>— sin opciones definidas —</div>}
+                  {preseleccionResumen.postres.map(r => (
+                    <div key={r.nombre} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderRadius: 8, background: r.cant > 0 ? B.navy : "transparent" }}>
+                      <span style={{ fontSize: 12, color: r.cant > 0 ? B.white : "rgba(255,255,255,0.4)" }}>{r.nombre}</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: r.cant > 0 ? "#fbbf24" : "rgba(255,255,255,0.3)", fontFamily: "'Barlow Condensed', sans-serif" }}>{r.cant}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
+          No hay servicios de Alimentos y Bebidas contratados.<br />
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.15)" }}>Agrega servicios de tipo "Menú Restaurante", "Menú Bebidas" o "Menú Banquetes" en el tab Servicios.</span>
+        </div>
+      </div>
+    );
+  }
+
+  // Resumen total de platos por servicio (siempre visible)
+  const resumenServicios = abServicios.map(s => ({
+    ...s,
+    _platos: getPlatos(s.id),
+  })).filter(s => s._platos.length > 0);
+  const totalPlatosSeleccionados = resumenServicios.reduce((sum, s) => sum + s._platos.length, 0);
 
   return (
     <div>
