@@ -3825,9 +3825,13 @@ function TabMenus({ servicios, menusDetalle, onChange, cotizacionData, timelineI
   const preseleccionResumen = (() => {
     const pf = {}, po = {};
     let totalCompletados = 0;
+    const detalle = []; // [{nombre, plato_fuerte, postre}] — solo pasajeros que eligieron algo
     for (const z of (zarpeData || [])) {
       if (z.plato_fuerte) { pf[z.plato_fuerte] = (pf[z.plato_fuerte] || 0) + 1; totalCompletados++; }
       if (z.postre)       { po[z.postre]       = (po[z.postre]       || 0) + 1; }
+      if (z.plato_fuerte || z.postre) {
+        detalle.push({ nombre: z.nombre || "(sin nombre)", plato_fuerte: z.plato_fuerte || "", postre: z.postre || "" });
+      }
     }
     const hayData = Object.keys(pf).length > 0 || Object.keys(po).length > 0;
     if (!preseleccionMenu && !hayData) return null;
@@ -3837,14 +3841,87 @@ function TabMenus({ servicios, menusDetalle, onChange, cotizacionData, timelineI
       const extras = Object.keys(dict).filter(k => !optList.includes(k)).map(k => ({ nombre: k + " (fuera de menú)", cant: dict[k] }));
       return [...rows, ...extras].sort((a, b) => b.cant - a.cant);
     };
+    detalle.sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "", "es"));
     return {
       totalCompletados,
       totalZarpe: (zarpeData || []).length,
       platosFuertes: asRows(pf, menuPlatosFuertes || []),
       postres: asRows(po, menuPostres || []),
+      detalle,
       sinToggle: !preseleccionMenu && hayData,
     };
   })();
+
+  // Helper: bloque completo del card de preselección (con resumen + tabla
+  // por pasajero). Se renderiza tanto en el empty-state como en la vista
+  // normal, y así evitamos duplicar el markup en dos lugares.
+  const PreseleccionCard = () => !preseleccionResumen ? null : (
+    <div style={{ background: "rgba(52,211,153,0.06)", borderRadius: 12, padding: "16px 20px", marginBottom: 16, border: "1px solid rgba(52,211,153,0.25)" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#34d399" }}>
+          🍽 Preselección de invitados
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 400, marginLeft: 8 }}>
+            ({preseleccionResumen.totalCompletados} pasajero{preseleccionResumen.totalCompletados !== 1 ? "s" : ""} han elegido)
+          </span>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#a3e635", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Plato Fuerte</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {preseleccionResumen.platosFuertes.length === 0 && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>— sin opciones definidas —</div>}
+            {preseleccionResumen.platosFuertes.map(r => (
+              <div key={r.nombre} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderRadius: 8, background: r.cant > 0 ? B.navy : "transparent" }}>
+                <span style={{ fontSize: 12, color: r.cant > 0 ? B.white : "rgba(255,255,255,0.4)" }}>{r.nombre}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: r.cant > 0 ? "#34d399" : "rgba(255,255,255,0.3)", fontFamily: "'Barlow Condensed', sans-serif" }}>{r.cant}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#fbbf24", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Postre</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {preseleccionResumen.postres.length === 0 && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>— sin opciones definidas —</div>}
+            {preseleccionResumen.postres.map(r => (
+              <div key={r.nombre} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderRadius: 8, background: r.cant > 0 ? B.navy : "transparent" }}>
+                <span style={{ fontSize: 12, color: r.cant > 0 ? B.white : "rgba(255,255,255,0.4)" }}>{r.nombre}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: r.cant > 0 ? "#fbbf24" : "rgba(255,255,255,0.3)", fontFamily: "'Barlow Condensed', sans-serif" }}>{r.cant}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Detalle por pasajero — quién pidió qué */}
+      {preseleccionResumen.detalle.length > 0 && (
+        <div style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid rgba(52,211,153,0.2)" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
+            Detalle por pasajero
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+                  <th style={{ textAlign: "left", padding: "6px 10px", color: "rgba(255,255,255,0.5)", fontWeight: 600 }}>Nombre</th>
+                  <th style={{ textAlign: "left", padding: "6px 10px", color: "#a3e635", fontWeight: 600 }}>🍽 Plato Fuerte</th>
+                  <th style={{ textAlign: "left", padding: "6px 10px", color: "#fbbf24", fontWeight: 600 }}>🍰 Postre</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preseleccionResumen.detalle.map((d, i) => (
+                  <tr key={i} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                    <td style={{ padding: "6px 10px", color: B.white }}>{d.nombre}</td>
+                    <td style={{ padding: "6px 10px", color: d.plato_fuerte ? B.white : "rgba(255,255,255,0.3)" }}>{d.plato_fuerte || "—"}</td>
+                    <td style={{ padding: "6px 10px", color: d.postre ? B.white : "rgba(255,255,255,0.3)" }}>{d.postre || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 
   // Empty-state cuando no hay servicios A&B contratados. Muestra el card de
   // preselección arriba si hay data (no lo esconde aunque el evento aún no
@@ -3852,44 +3929,7 @@ function TabMenus({ servicios, menusDetalle, onChange, cotizacionData, timelineI
   if (abServicios.length === 0) {
     return (
       <div>
-        {preseleccionResumen && (
-          <div style={{ background: "rgba(52,211,153,0.06)", borderRadius: 12, padding: "16px 20px", marginBottom: 16, border: "1px solid rgba(52,211,153,0.25)" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#34d399" }}>
-                🍽 Preselección de invitados
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 400, marginLeft: 8 }}>
-                  ({preseleccionResumen.totalCompletados} pasajero{preseleccionResumen.totalCompletados !== 1 ? "s" : ""} han elegido)
-                </span>
-              </div>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#a3e635", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Plato Fuerte</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {preseleccionResumen.platosFuertes.length === 0 && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>— sin opciones definidas —</div>}
-                  {preseleccionResumen.platosFuertes.map(r => (
-                    <div key={r.nombre} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderRadius: 8, background: r.cant > 0 ? B.navy : "transparent" }}>
-                      <span style={{ fontSize: 12, color: r.cant > 0 ? B.white : "rgba(255,255,255,0.4)" }}>{r.nombre}</span>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: r.cant > 0 ? "#34d399" : "rgba(255,255,255,0.3)", fontFamily: "'Barlow Condensed', sans-serif" }}>{r.cant}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#fbbf24", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Postre</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {preseleccionResumen.postres.length === 0 && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>— sin opciones definidas —</div>}
-                  {preseleccionResumen.postres.map(r => (
-                    <div key={r.nombre} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderRadius: 8, background: r.cant > 0 ? B.navy : "transparent" }}>
-                      <span style={{ fontSize: 12, color: r.cant > 0 ? B.white : "rgba(255,255,255,0.4)" }}>{r.nombre}</span>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: r.cant > 0 ? "#fbbf24" : "rgba(255,255,255,0.3)", fontFamily: "'Barlow Condensed', sans-serif" }}>{r.cant}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        <PreseleccionCard />
         <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
           No hay servicios de Alimentos y Bebidas contratados.<br />
           <span style={{ fontSize: 12, color: "rgba(255,255,255,0.15)" }}>Agrega servicios de tipo "Menú Restaurante", "Menú Bebidas" o "Menú Banquetes" en el tab Servicios.</span>
@@ -3908,44 +3948,7 @@ function TabMenus({ servicios, menusDetalle, onChange, cotizacionData, timelineI
   return (
     <div>
       {/* ── Preselección de invitados (via /zarpe-grupo) ── */}
-      {preseleccionResumen && (
-        <div style={{ background: "rgba(52,211,153,0.06)", borderRadius: 12, padding: "16px 20px", marginBottom: 16, border: "1px solid rgba(52,211,153,0.25)" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#34d399" }}>
-              🍽 Preselección de invitados
-              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 400, marginLeft: 8 }}>
-                ({preseleccionResumen.totalCompletados} pasajero{preseleccionResumen.totalCompletados !== 1 ? "s" : ""} han elegido)
-              </span>
-            </div>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#a3e635", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Plato Fuerte</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {preseleccionResumen.platosFuertes.length === 0 && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>— sin opciones definidas —</div>}
-                {preseleccionResumen.platosFuertes.map(r => (
-                  <div key={r.nombre} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderRadius: 8, background: r.cant > 0 ? B.navy : "transparent" }}>
-                    <span style={{ fontSize: 12, color: r.cant > 0 ? B.white : "rgba(255,255,255,0.4)" }}>{r.nombre}</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: r.cant > 0 ? "#34d399" : "rgba(255,255,255,0.3)", fontFamily: "'Barlow Condensed', sans-serif" }}>{r.cant}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#fbbf24", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Postre</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {preseleccionResumen.postres.length === 0 && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>— sin opciones definidas —</div>}
-                {preseleccionResumen.postres.map(r => (
-                  <div key={r.nombre} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderRadius: 8, background: r.cant > 0 ? B.navy : "transparent" }}>
-                    <span style={{ fontSize: 12, color: r.cant > 0 ? B.white : "rgba(255,255,255,0.4)" }}>{r.nombre}</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: r.cant > 0 ? "#fbbf24" : "rgba(255,255,255,0.3)", fontFamily: "'Barlow Condensed', sans-serif" }}>{r.cant}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <PreseleccionCard />
 
       {/* ── Resumen siempre visible ── */}
       {totalPlatosSeleccionados > 0 && (
