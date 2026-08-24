@@ -67,6 +67,8 @@ export default function Analitica({ externo = false }) {
   const [adSpend, setAdSpend] = useState([]);     // filas ad_spend del periodo
   const [nuevoAdSpend, setNuevoAdSpend] = useState({ canal: "meta_ads", semana_ini: "", monto: "", campana: "" });
   const [periodoRevenue, setPeriodoRevenue] = useState({ clientes: 0, revenue: 0 });
+  // Fuente detallada: desglose Google/Meta/etc por origen específico
+  const [fuenteDetallada, setFuenteDetallada] = useState({ buckets: [], otros: [] });
   const [loading, setLoading] = useState(true);
 
   const periodos = [
@@ -233,6 +235,56 @@ export default function Analitica({ externo = false }) {
       clientes: resConvList.length,
       revenue: resConvList.reduce((s, r) => s + (r.total || 0), 0),
     });
+
+    // ── Fuente detallada: desglose Google (Ads/Orgánico), Meta (IG/FB × Ads/Orgánico), Direct, etc.
+    const clasificar = (s) => {
+      const u = s.utms || {};
+      const src = String(u.utm_source || "").toLowerCase();
+      const med = String(u.utm_medium || "").toLowerCase();
+      const ref = String(s.referrer || "").toLowerCase();
+      const isPaid = /cpc|ppc|paid|paidsocial|paid_social|display/i.test(med);
+      // Google
+      if (s.gclid || (src === "google" && isPaid)) return "google_ads";
+      if (src === "google" || /google\.[a-z.]+\/?/.test(ref)) return "google_organic";
+      // Meta paid
+      if (s.fbclid && (src === "ig" || src === "instagram" || /instagram\.com/.test(ref))) return "meta_ads_instagram";
+      if (s.fbclid && (src === "fb" || src === "facebook" || /facebook\.com|fb\.com/.test(ref))) return "meta_ads_facebook";
+      if (s.fbclid || (isPaid && (src === "fb" || src === "facebook" || src === "meta"))) return "meta_ads_facebook";
+      if (isPaid && (src === "ig" || src === "instagram")) return "meta_ads_instagram";
+      // Meta orgánico
+      if (src === "instagram" || /instagram\.com/.test(ref)) return "instagram_organic";
+      if (src === "facebook" || src === "fb" || /facebook\.com|fb\.com/.test(ref)) return "facebook_organic";
+      // TikTok
+      if (s.ttclid || src === "tiktok" || /tiktok\.com/.test(ref)) return "tiktok";
+      // WhatsApp
+      if (src === "whatsapp" || src === "wa" || /wa\.me|whatsapp\.com|l\.wl\.co/.test(ref)) return "whatsapp";
+      // Bing
+      if (s.msclkid || src === "bing" || /bing\.com/.test(ref)) return "bing";
+      // Direct (sin referrer y sin utm)
+      if (!ref && !src) return "direct";
+      // Referrer interno atolon
+      if (/atolon\.co/.test(ref)) return "atolon_internal";
+      return "otro";
+    };
+
+    const bucketMap = {};
+    const otrosRef = {};
+    sesList.forEach(s => {
+      const b = clasificar(s);
+      bucketMap[b] = (bucketMap[b] || 0) + 1;
+      if (b === "otro") {
+        const ref = String(s.referrer || "(sin)").toLowerCase().replace(/^https?:\/\//, "").split("/")[0];
+        otrosRef[ref] = (otrosRef[ref] || 0) + 1;
+      }
+    });
+    const buckets = Object.entries(bucketMap)
+      .map(([key, n]) => ({ key, n }))
+      .sort((a, b) => b.n - a.n);
+    const otros = Object.entries(otrosRef)
+      .map(([ref, n]) => ({ ref, n }))
+      .sort((a, b) => b.n - a.n)
+      .slice(0, 10);
+    setFuenteDetallada({ buckets, otros });
 
     // ── Calidad de Atribución (Paid Media) + filas para Meta CAPI / Google ────
     // Por cada venta pagada self-service: resolvemos click-id y fuente vía la
@@ -778,6 +830,9 @@ export default function Analitica({ externo = false }) {
           )}
         </>
       )}
+
+      {/* ═══ Fuente detallada (Google Ads/Orgánico, Meta IG/FB × Ads/Orgánico, Direct) ═══ */}
+      <FuenteDetalladaPanel fuente={fuenteDetallada} totalSes={stats?.totalSesiones || 0} />
 
       {/* ═══ Fase 2.1 AtolonTrack: CAC + ROAS + ad_spend CRUD ═════════════ */}
       <AdSpendPanel
@@ -1837,6 +1892,108 @@ function AudienciasPanel() {
               </table>
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Panel: Fuente Detallada — Google Ads/Orgánico, Meta (IG/FB × Ads/Orgánico), Direct, etc.
+// ══════════════════════════════════════════════════════════════════════════
+function FuenteDetalladaPanel({ fuente, totalSes }) {
+  const BUCKETS = {
+    google_ads:         { label: "Google Ads",           icon: "🔵", color: "#4285F4", grupo: "Google" },
+    google_organic:     { label: "Google Orgánico",      icon: "🔎", color: "#34A853", grupo: "Google" },
+    meta_ads_instagram: { label: "Instagram Ads",        icon: "📸", color: "#E1306C", grupo: "Meta" },
+    meta_ads_facebook:  { label: "Facebook Ads",         icon: "📘", color: "#1877F2", grupo: "Meta" },
+    instagram_organic:  { label: "Instagram Orgánico",   icon: "📸", color: "#F06292", grupo: "Meta" },
+    facebook_organic:   { label: "Facebook Orgánico",    icon: "📘", color: "#5B9BD5", grupo: "Meta" },
+    tiktok:             { label: "TikTok",               icon: "🎵", color: "#000000", grupo: "TikTok" },
+    bing:               { label: "Bing",                 icon: "🅱", color: "#008373", grupo: "Otros buscadores" },
+    whatsapp:           { label: "WhatsApp (referido)",  icon: "💬", color: "#25D366", grupo: "WhatsApp" },
+    direct:             { label: "Directo (URL tipeada)",icon: "🔗", color: "#F5C842", grupo: "Directo" },
+    atolon_internal:    { label: "Navegación interna",   icon: "🔄", color: "#7C7C7C", grupo: "Interno" },
+    otro:               { label: "Otro / desconocido",   icon: "❓", color: "#94A3B8", grupo: "Otro" },
+  };
+
+  const buckets = (fuente?.buckets || []).map(b => ({ ...b, ...(BUCKETS[b.key] || BUCKETS.otro) }));
+  const total = buckets.reduce((s, b) => s + b.n, 0) || 1;
+
+  // Agrupados
+  const porGrupo = {};
+  buckets.forEach(b => {
+    porGrupo[b.grupo] = (porGrupo[b.grupo] || 0) + b.n;
+  });
+  const gruposOrdenados = Object.entries(porGrupo).sort((a, b) => b[1] - a[1]);
+
+  const cardBg = "rgba(15, 25, 55, 0.6)";
+
+  return (
+    <div style={{ background: "rgba(15, 25, 55, 0.4)", borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)", marginBottom: 20 }}>
+      <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#fff" }}>🎯 Fuente Detallada de Tráfico</h3>
+      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3, marginBottom: 16 }}>
+        Desglose por origen: Google (Ads vs Orgánico), Meta (Instagram / Facebook × Ads / Orgánico), TikTok, WhatsApp, Directo, Interno.
+        Detección por gclid / fbclid / ttclid + utm_source + referrer.
+      </div>
+
+      {/* Barras agrupadas por marca */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
+        {gruposOrdenados.map(([grupo, n]) => {
+          const pct = (n / total * 100).toFixed(1);
+          const barColor = grupo === "Google" ? "#4285F4" : grupo === "Meta" ? "#E1306C" : grupo === "TikTok" ? "#000" : grupo === "WhatsApp" ? "#25D366" : grupo === "Directo" ? "#F5C842" : "#94A3B8";
+          return (
+            <div key={grupo} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 140, fontSize: 12, color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>{grupo}</div>
+              <div style={{ flex: 1, height: 22, background: "rgba(255,255,255,0.04)", borderRadius: 6, overflow: "hidden", position: "relative" }}>
+                <div style={{ height: "100%", width: pct + "%", background: barColor, borderRadius: 6, transition: "width 0.3s" }} />
+              </div>
+              <div style={{ width: 80, textAlign: "right", fontSize: 12, fontWeight: 700, color: "#fff" }}>{n.toLocaleString("es-CO")}</div>
+              <div style={{ width: 50, textAlign: "right", fontSize: 11, color: "rgba(255,255,255,0.5)" }}>{pct}%</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Grid de buckets específicos */}
+      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 8 }}>Desglose por canal específico</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+        {buckets.map(b => {
+          const pct = (b.n / total * 100).toFixed(1);
+          return (
+            <div key={b.key} style={{ background: cardBg, borderRadius: 10, padding: 14, borderLeft: `3px solid ${b.color}` }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", fontWeight: 600 }}>{b.icon} {b.label}</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: "#fff", marginTop: 4 }}>{b.n.toLocaleString("es-CO")}</div>
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: b.color }}>{pct}%</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Top referrers "otro" para investigar */}
+      {(fuente?.otros?.length || 0) > 0 && (
+        <>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginTop: 20, marginBottom: 8 }}>
+            🔍 Top referrers dentro de "Otro"
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {fuente.otros.map((o, i) => (
+              <div key={i} style={{ padding: "6px 12px", borderRadius: 8, background: cardBg, fontSize: 12 }}>
+                <span style={{ color: "rgba(255,255,255,0.6)" }}>{o.ref}</span>
+                <strong style={{ color: "#fff", marginLeft: 8 }}>{o.n}</strong>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {buckets.length === 0 && (
+        <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 13 }}>
+          Sin sesiones en este período.
         </div>
       )}
     </div>
