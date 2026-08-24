@@ -1345,6 +1345,72 @@ const SALIDAS_PASADIA = [
   { id: "S4", label: "Cuarta Salida — 12:30" },
 ];
 
+function EmbarcacionesEventoSelector({ embarcacionesDB, embsEvento, selIds, toggleEmb }) {
+  const [pick, setPick] = useState("");
+  const disponibles = (embarcacionesDB || []).filter(e => !selIds.has(e.id));
+  const capTotal = embsEvento.reduce((s, e) => s + (e.capacidad || 0), 0);
+
+  function agregar() {
+    if (!pick) return;
+    const emb = embarcacionesDB.find(x => x.id === pick);
+    if (!emb) return;
+    toggleEmb(emb);
+    setPick("");
+  }
+
+  return (
+    <div style={{ background: B.navy, borderRadius: 12, padding: "16px 20px", marginBottom: 20, border: `1px solid ${B.navyLight}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+        <div style={{ fontSize: 14, fontWeight: 800 }}>⛵ Embarcaciones del evento</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+          {embsEvento.length} agregada{embsEvento.length !== 1 ? "s" : ""} · Cap. total: <strong style={{ color: B.sky }}>{capTotal}</strong> pax
+        </div>
+      </div>
+
+      {/* Dropdown + botón agregar */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <select value={pick} onChange={e => setPick(e.target.value)}
+          style={{ flex: 1, padding: "10px 12px", borderRadius: 8, background: B.navyLight, border: `1px solid ${B.navyLight}`, color: B.white, fontSize: 13, outline: "none" }}>
+          <option value="">— Selecciona una embarcación para agregar —</option>
+          {disponibles.length === 0 && <option disabled>(Todas ya están agregadas)</option>}
+          {disponibles.map(e => (
+            <option key={e.id} value={e.id}>{e.nombre} · {e.tipo || "Embarcación"} · cap {e.capacidad || "?"}{e.propiedad === "rentada" && e.propietario_nombre ? ` · ${e.propietario_nombre}` : ""}</option>
+          ))}
+        </select>
+        <button onClick={agregar} disabled={!pick}
+          style={{ padding: "0 20px", borderRadius: 8, border: "none", background: pick ? B.success : "rgba(255,255,255,0.08)", color: "#fff", fontWeight: 700, fontSize: 13, cursor: pick ? "pointer" : "default", opacity: pick ? 1 : 0.5 }}>
+          + Agregar
+        </button>
+      </div>
+
+      {/* Lista de agregadas */}
+      {embsEvento.length === 0 && (
+        <div style={{ padding: 20, textAlign: "center", color: "rgba(255,255,255,0.4)", fontSize: 12, background: B.navyLight, borderRadius: 8, border: `1px dashed rgba(255,255,255,0.1)` }}>
+          Aún no hay embarcaciones agregadas. Usa el selector de arriba para agregar una o varias.
+        </div>
+      )}
+      {embsEvento.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {embsEvento.map(emb => (
+            <div key={emb.id} style={{ padding: "10px 14px", borderRadius: 8, background: B.sky + "12", borderLeft: `3px solid ${B.sky}`, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: B.sky }}>⛵ {emb.nombre}</div>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+                  {emb.tipo || "Embarcación"} · Cap. {emb.capacidad || "?"}{emb.matricula ? ` · ${emb.matricula}` : ""} · {emb.propiedad}
+                </div>
+              </div>
+              <button onClick={() => toggleEmb(emb)} title="Quitar"
+                style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "rgba(239,68,68,0.15)", color: "#EF4444", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                ✕ Quitar
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TabTransporte({ items, onChange, embarcacionesEvento, onChangeEmbarcaciones, timelineItems = [], evento, updateLocal }) {
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId]     = useState(null);
@@ -1440,36 +1506,12 @@ function TabTransporte({ items, onChange, embarcacionesEvento, onChangeEmbarcaci
       )}
 
       {/* ── Embarcaciones asignadas al evento ── */}
-      <div style={{ background: B.navy, borderRadius: 12, padding: "16px 20px", marginBottom: 20, border: `1px solid ${B.navyLight}` }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div style={{ fontSize: 14, fontWeight: 800 }}>⛵ Embarcaciones del evento</div>
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
-            {embsEvento.length} seleccionada{embsEvento.length !== 1 ? "s" : ""} · Cap. total: {embsEvento.reduce((s, e) => s + (e.capacidad || 0), 0)}
-          </div>
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {embarcacionesDB.map(emb => {
-            const sel = selIds.has(emb.id);
-            return (
-              <div key={emb.id} onClick={() => toggleEmb(emb)}
-                style={{ padding: "10px 14px", borderRadius: 10, cursor: "pointer",
-                  border: `2px solid ${sel ? B.sky : "transparent"}`,
-                  background: sel ? B.sky + "15" : B.navyLight,
-                  display: "flex", alignItems: "center", gap: 8, transition: "all 0.15s" }}>
-                <div style={{ width: 20, height: 20, borderRadius: 4, border: sel ? "none" : "2px solid rgba(255,255,255,0.15)",
-                  background: sel ? B.sky : "transparent", display: "flex", alignItems: "center", justifyContent: "center",
-                  color: "#fff", fontSize: 12, flexShrink: 0 }}>{sel && "✓"}</div>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: sel ? 700 : 400, color: sel ? B.sky : "rgba(255,255,255,0.6)" }}>{emb.nombre}</div>
-                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>
-                    {emb.tipo || "Embarcación"} · Cap. {emb.capacidad}{emb.matricula ? ` · ${emb.matricula}` : ""} · {emb.propiedad}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      <EmbarcacionesEventoSelector
+        embarcacionesDB={embarcacionesDB}
+        embsEvento={embsEvento}
+        selIds={selIds}
+        toggleEmb={toggleEmb}
+      />
 
       {/* ── Traslados ── */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
