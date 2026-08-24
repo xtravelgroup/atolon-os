@@ -63,8 +63,7 @@ const CHIP = (bg, fg) => ({ display: "inline-block", padding: "3px 10px", border
 export default function EmbarcacionSolicitudes() {
   const { isMobile } = useBreakpoint();
   const [rows, setRows] = useState([]);
-  const [embarcaciones, setEmbarcaciones] = useState([]);
-  const [proveedores, setProveedores] = useState([]);
+  const [embarcaciones, setEmbarcaciones] = useState([]);   // maestro: propias + rentadas
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [filtroEstado, setFiltroEstado] = useState("activas"); // activas | todas | <estado>
@@ -75,21 +74,19 @@ export default function EmbarcacionSolicitudes() {
   });
   const [modalNueva, setModalNueva] = useState(false);
   const [gestion, setGestion] = useState(null);
-  const [modalProveedor, setModalProveedor] = useState(null); // { row } o { row: null } para nuevo
-  const [verProveedores, setVerProveedores] = useState(false);
+  const [modalEmbarcacion, setModalEmbarcacion] = useState(null); // { row: emb } o { row: null } para nueva
+  const [verEmbarcaciones, setVerEmbarcaciones] = useState(false);
 
   const cargar = useCallback(async () => {
     setLoading(true);
-    const [{ data: sess }, { data: solRows }, { data: embRows }, { data: provRows }] = await Promise.all([
+    const [{ data: sess }, { data: solRows }, { data: embRows }] = await Promise.all([
       supabase.auth.getUser(),
       supabase.from("embarcacion_solicitudes").select("*").gte("fecha_servicio", filtroFechaDesde).order("fecha_servicio", { ascending: false }).order("created_at", { ascending: false }),
-      supabase.from("embarcaciones").select("id, nombre, tipo, propiedad, capacidad, estado").order("nombre"),
-      supabase.from("embarcacion_proveedores").select("*").eq("activo", true).order("nombre_embarcacion"),
+      supabase.from("embarcaciones").select("*").order("nombre"),
     ]);
     setUser(sess?.user || null);
     setRows(solRows || []);
     setEmbarcaciones(embRows || []);
-    setProveedores(provRows || []);
     setLoading(false);
   }, [filtroFechaDesde]);
 
@@ -126,9 +123,9 @@ export default function EmbarcacionSolicitudes() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button onClick={() => setVerProveedores(true)}
+          <button onClick={() => setVerEmbarcaciones(true)}
             style={{ ...BTN("rgba(255,255,255,0.08)", "#fff"), fontSize: 13 }}>
-            🏢 Embarcaciones Registradas
+            ⛵ Embarcaciones Rentadas
           </button>
           <button onClick={() => setModalNueva(true)}
             style={{ ...BTN("#10B981"), fontSize: 14, padding: "12px 22px" }}>
@@ -197,28 +194,27 @@ export default function EmbarcacionSolicitudes() {
         <GestionModal
           row={gestion}
           embarcaciones={embarcaciones}
-          proveedores={proveedores}
           user={user}
           onClose={() => setGestion(null)}
           onSaved={() => { setGestion(null); cargar(); }}
-          onEditarProveedor={(p) => setModalProveedor({ row: p })}
-          onNuevoProveedor={() => setModalProveedor({ row: null })}
+          onEditarEmbarcacion={(e) => setModalEmbarcacion({ row: e })}
+          onNuevaEmbarcacion={() => setModalEmbarcacion({ row: null })}
         />
       )}
-      {verProveedores && (
-        <ListaProveedoresModal
-          proveedores={proveedores}
-          onClose={() => setVerProveedores(false)}
-          onNuevo={() => { setVerProveedores(false); setModalProveedor({ row: null }); }}
-          onEditar={(p) => { setVerProveedores(false); setModalProveedor({ row: p }); }}
+      {verEmbarcaciones && (
+        <ListaEmbarcacionesRentadasModal
+          embarcaciones={embarcaciones}
+          onClose={() => setVerEmbarcaciones(false)}
+          onNuevo={() => { setVerEmbarcaciones(false); setModalEmbarcacion({ row: null }); }}
+          onEditar={(e) => { setVerEmbarcaciones(false); setModalEmbarcacion({ row: e }); }}
         />
       )}
-      {modalProveedor && (
-        <ProveedorModal
-          row={modalProveedor.row}
+      {modalEmbarcacion && (
+        <EmbarcacionModal
+          row={modalEmbarcacion.row}
           user={user}
-          onClose={() => setModalProveedor(null)}
-          onSaved={() => { setModalProveedor(null); cargar(); }}
+          onClose={() => setModalEmbarcacion(null)}
+          onSaved={() => { setModalEmbarcacion(null); cargar(); }}
         />
       )}
     </div>
@@ -440,12 +436,10 @@ function SolicitudModal({ user, onClose, onSaved }) {
 // ══════════════════════════════════════════════════════════════════════════
 // Modal gestión (asignar / avanzar estado / completar)
 // ══════════════════════════════════════════════════════════════════════════
-function GestionModal({ row, embarcaciones, proveedores, user, onClose, onSaved, onEditarProveedor, onNuevoProveedor }) {
+function GestionModal({ row, embarcaciones, user, onClose, onSaved, onEditarEmbarcacion, onNuevaEmbarcacion }) {
   const { isMobile } = useBreakpoint();
   const [form, setForm] = useState({
     embarcacion_id: row.embarcacion_id || "",
-    embarcacion_proveedor_id: row.embarcacion_proveedor_id || "",
-    proveedor_externo: row.proveedor_externo || "",
     capitan: row.capitan || "",
     capitan_tel: row.capitan_tel || "",
     costo_estimado: row.costo_estimado || "",
@@ -474,20 +468,16 @@ function GestionModal({ row, embarcaciones, proveedores, user, onClose, onSaved,
     onSaved();
   }
 
-  const provMap = new Map((proveedores || []).map(p => [p.id, p]));
-
   async function asignar() {
-    if (!form.embarcacion_id && !form.embarcacion_proveedor_id) return setErr("Elige una embarcación (de flota o registrada). Si el proveedor no existe, regístralo primero.");
-    const emb = form.embarcacion_id ? embMap.get(form.embarcacion_id) : null;
-    const prov = form.embarcacion_proveedor_id ? provMap.get(form.embarcacion_proveedor_id) : null;
+    if (!form.embarcacion_id) return setErr("Elige una embarcación. Si no está registrada, créala con el botón + al lado del selector.");
+    const emb = embMap.get(form.embarcacion_id);
     await actualizar({
       estado: "asignada",
-      embarcacion_id: form.embarcacion_id || null,
-      embarcacion_nombre: emb ? emb.nombre : (prov ? prov.nombre_embarcacion : null),
-      embarcacion_proveedor_id: form.embarcacion_proveedor_id || null,
-      proveedor_externo: prov ? prov.propietario_nombre : null,
-      capitan: form.capitan || null,
-      capitan_tel: form.capitan_tel || (prov?.propietario_telefono || null),
+      embarcacion_id: form.embarcacion_id,
+      embarcacion_nombre: emb?.nombre || null,
+      proveedor_externo: (emb?.propiedad === "rentada" ? (emb?.propietario_nombre || null) : null),
+      capitan: form.capitan || emb?.capitan || null,
+      capitan_tel: form.capitan_tel || emb?.piloto_celular || emb?.propietario_telefono || null,
       costo_estimado: form.costo_estimado === "" ? null : Number(form.costo_estimado),
       cobrado_a: form.cobrado_a || null,
       asignado_por: user?.id || null,
@@ -624,50 +614,55 @@ function GestionModal({ row, embarcaciones, proveedores, user, onClose, onSaved,
 
           {/* Sección asignación (siempre visible pero deshabilitada según estado) */}
           <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 8 }}>⛵ Asignación</div>
-          <div style={grid2(isMobile)}>
-            <div>
-              <label style={LS}>Embarcación de flota propia</label>
-              <select style={IS} value={form.embarcacion_id} onChange={e => { set("embarcacion_id", e.target.value); if (e.target.value) set("embarcacion_proveedor_id", ""); }}>
-                <option value="">— Ninguna —</option>
-                {embarcaciones.filter(e => e.estado !== "inactivo").map(e => (
-                  <option key={e.id} value={e.id}>{e.nombre} · {e.tipo} · cap {e.capacidad}</option>
-                ))}
+          <div style={{ marginBottom: 14 }}>
+            <label style={LS}>Embarcación</label>
+            <div style={{ display: "flex", gap: 6 }}>
+              <select style={{ ...IS, flex: 1 }} value={form.embarcacion_id}
+                onChange={e => set("embarcacion_id", e.target.value)}>
+                <option value="">— Selecciona una —</option>
+                <optgroup label="🏢 Flota propia">
+                  {embarcaciones.filter(e => e.propiedad === "propia" && e.estado !== "inactivo").map(e => (
+                    <option key={e.id} value={e.id}>{e.nombre} · {e.tipo || ""} · cap {e.capacidad || "?"}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="⛵ Rentadas">
+                  {embarcaciones.filter(e => e.propiedad === "rentada" && e.estado !== "inactivo").map(e => (
+                    <option key={e.id} value={e.id}>{e.nombre}{e.propietario_nombre ? ` · ${e.propietario_nombre}` : ""} · cap {e.capacidad || "?"}</option>
+                  ))}
+                </optgroup>
               </select>
-            </div>
-            <div>
-              <label style={LS}>Embarcación registrada (externa)</label>
-              <div style={{ display: "flex", gap: 6 }}>
-                <select style={{ ...IS, flex: 1 }} value={form.embarcacion_proveedor_id}
-                  onChange={e => { set("embarcacion_proveedor_id", e.target.value); if (e.target.value) set("embarcacion_id", ""); }}>
-                  <option value="">— Ninguna —</option>
-                  {proveedores.map(p => {
-                    const flags = [];
-                    if (!p.rut_url) flags.push("sin RUT");
-                    if (!p.certificacion_bancaria_url) flags.push("sin cert.bancaria");
-                    const flagTxt = flags.length ? ` ⚠ ${flags.join(", ")}` : "";
-                    return <option key={p.id} value={p.id}>{p.nombre_embarcacion}{p.propietario_nombre ? ` · ${p.propietario_nombre}` : ""}{flagTxt}</option>;
-                  })}
-                </select>
-                <button onClick={onNuevoProveedor} title="Registrar nueva embarcación"
-                  style={{ padding: "0 12px", borderRadius: 8, border: "none", background: "#10B981", color: "#fff", fontSize: 18, fontWeight: 700, cursor: "pointer" }}>+</button>
-                {form.embarcacion_proveedor_id && (
-                  <button onClick={() => onEditarProveedor(provMap.get(form.embarcacion_proveedor_id))} title="Editar embarcación registrada"
-                    style={{ padding: "0 12px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "#fff", fontSize: 14, cursor: "pointer" }}>✎</button>
-                )}
-              </div>
+              <button onClick={onNuevaEmbarcacion} title="Registrar nueva embarcación rentada"
+                style={{ padding: "0 14px", borderRadius: 8, border: "none", background: "#10B981", color: "#fff", fontSize: 20, fontWeight: 700, cursor: "pointer" }}>+</button>
+              {form.embarcacion_id && (
+                <button onClick={() => onEditarEmbarcacion(embMap.get(form.embarcacion_id))} title="Editar / completar datos"
+                  style={{ padding: "0 12px", borderRadius: 8, border: `1px solid ${B.navyLight}`, background: "transparent", color: "#fff", fontSize: 14, cursor: "pointer" }}>✎</button>
+              )}
             </div>
           </div>
-          {form.embarcacion_proveedor_id && (() => {
-            const p = provMap.get(form.embarcacion_proveedor_id);
-            if (!p) return null;
+
+          {/* Card con datos de la embarcación seleccionada (si es rentada) */}
+          {form.embarcacion_id && (() => {
+            const e = embMap.get(form.embarcacion_id);
+            if (!e || e.propiedad !== "rentada") return null;
+            const faltantes = [];
+            if (!e.propietario_nombre) faltantes.push("propietario");
+            if (!e.propietario_documento) faltantes.push("NIT/CC");
+            if (!e.banco || !e.cuenta_numero) faltantes.push("cuenta bancaria");
+            if (!e.rut_url) faltantes.push("RUT");
+            if (!e.certificacion_bancaria_url) faltantes.push("cert. bancaria");
             return (
               <div style={{ marginBottom: 14, padding: 12, background: "rgba(56,189,248,0.08)", borderRadius: 8, fontSize: 12, color: "rgba(255,255,255,0.85)", lineHeight: 1.6, borderLeft: `3px solid #38BDF8` }}>
-                <div>👤 <strong>{p.propietario_nombre || "(sin propietario)"}</strong>{p.propietario_documento && ` · ${p.propietario_documento}`}</div>
-                {(p.banco || p.cuenta_numero) && <div>🏦 {p.banco || "—"} · {p.cuenta_tipo || ""} {p.cuenta_numero || ""}</div>}
+                <div>👤 <strong>{e.propietario_nombre || <span style={{ color: "#94A3B8" }}>(sin propietario)</span>}</strong>{e.propietario_documento && ` · ${e.propietario_documento}`}</div>
+                {(e.banco || e.cuenta_numero) && <div>🏦 {e.banco || "—"} · {e.cuenta_tipo || ""} {e.cuenta_numero || ""}</div>}
                 <div style={{ marginTop: 6, display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  <span>📄 RUT: {p.rut_url ? <a href={p.rut_url} target="_blank" rel="noopener" style={{ color: "#38BDF8" }}>ver</a> : <span style={{ color: "#F59E0B" }}>faltante</span>}</span>
-                  <span>🏦 Cert. bancaria: {p.certificacion_bancaria_url ? <a href={p.certificacion_bancaria_url} target="_blank" rel="noopener" style={{ color: "#38BDF8" }}>ver</a> : <span style={{ color: "#F59E0B" }}>faltante</span>}</span>
+                  <span>📄 RUT: {e.rut_url ? <a href={e.rut_url} target="_blank" rel="noopener" style={{ color: "#38BDF8" }}>ver</a> : <span style={{ color: "#94A3B8" }}>—</span>}</span>
+                  <span>🏦 Cert. bancaria: {e.certificacion_bancaria_url ? <a href={e.certificacion_bancaria_url} target="_blank" rel="noopener" style={{ color: "#38BDF8" }}>ver</a> : <span style={{ color: "#94A3B8" }}>—</span>}</span>
                 </div>
+                {faltantes.length > 0 && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: "#F59E0B" }}>
+                    💡 Datos faltantes: {faltantes.join(", ")}. <button onClick={() => onEditarEmbarcacion(e)} style={{ background: "transparent", border: "none", color: "#38BDF8", cursor: "pointer", textDecoration: "underline", padding: 0, fontSize: 11 }}>completar ahora</button> (opcional — la solicitud puede zarpar sin estos datos).
+                  </div>
+                )}
               </div>
             );
           })()}
@@ -785,50 +780,54 @@ function GestionModal({ row, embarcaciones, proveedores, user, onClose, onSaved,
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// Lista de embarcaciones registradas (proveedores externos)
+// Lista de embarcaciones rentadas del maestro
 // ══════════════════════════════════════════════════════════════════════════
-function ListaProveedoresModal({ proveedores, onClose, onNuevo, onEditar }) {
+function ListaEmbarcacionesRentadasModal({ embarcaciones, onClose, onNuevo, onEditar }) {
   const { isMobile } = useBreakpoint();
   const [busca, setBusca] = useState("");
-  const list = proveedores.filter(p => {
+  const rentadas = embarcaciones.filter(e => e.propiedad === "rentada");
+  const list = rentadas.filter(e => {
     const q = busca.trim().toLowerCase();
     if (!q) return true;
-    return [p.nombre_embarcacion, p.propietario_nombre, p.propietario_documento].filter(Boolean).some(x => x.toLowerCase().includes(q));
+    return [e.nombre, e.propietario_nombre, e.propietario_documento, e.capitan].filter(Boolean).some(x => x.toLowerCase().includes(q));
   });
   return (
     <div onClick={onClose} style={modalBg}>
       <div onClick={e => e.stopPropagation()} style={{ ...modalBox(isMobile), maxWidth: 800 }}>
         <div style={modalHead}>
-          <h3 style={{ margin: 0, color: "#fff" }}>🏢 Embarcaciones Registradas</h3>
+          <h3 style={{ margin: 0, color: "#fff" }}>⛵ Embarcaciones Rentadas ({rentadas.length})</h3>
           <button onClick={onNuevo} style={BTN("#10B981")}>+ Nueva</button>
           <button onClick={onClose} style={btnClose}>×</button>
         </div>
         <div style={{ padding: 16, borderBottom: `1px solid ${B.navyLight}` }}>
-          <input placeholder="Buscar por nombre, propietario o NIT…" value={busca} onChange={e => setBusca(e.target.value)} style={IS} />
+          <input placeholder="Buscar por nombre, propietario, capitán o NIT…" value={busca} onChange={e => setBusca(e.target.value)} style={IS} />
         </div>
         <div style={{ overflowY: "auto", flex: 1 }}>
           {list.length === 0 && (
             <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.5)" }}>
-              {proveedores.length === 0 ? "Aún no tienes embarcaciones registradas." : "Sin resultados."}
+              {rentadas.length === 0 ? "Aún no hay embarcaciones rentadas registradas." : "Sin resultados."}
             </div>
           )}
-          {list.map(p => {
-            const flagRut = !p.rut_url;
-            const flagCert = !p.certificacion_bancaria_url;
+          {list.map(e => {
+            const flagRut = !e.rut_url;
+            const flagCert = !e.certificacion_bancaria_url;
+            const flagBanco = !e.banco || !e.cuenta_numero;
             return (
-              <div key={p.id} onClick={() => onEditar(p)}
+              <div key={e.id} onClick={() => onEditar(e)}
                 style={{ padding: 14, borderBottom: `1px solid ${B.navyLight}`, cursor: "pointer", display: "flex", justifyContent: "space-between", gap: 10 }}
-                onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.03)"}
-                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                onMouseEnter={ev => ev.currentTarget.style.background = "rgba(255,255,255,0.03)"}
+                onMouseLeave={ev => ev.currentTarget.style.background = "transparent"}>
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>⛵ {p.nombre_embarcacion} {p.tipo && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 400 }}>· {p.tipo}{p.capacidad ? ` · cap ${p.capacidad}` : ""}</span>}</div>
-                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 4 }}>👤 {p.propietario_nombre || "(sin propietario)"}{p.propietario_documento && ` · ${p.propietario_documento}`}</div>
-                  {(p.banco || p.cuenta_numero) && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>🏦 {p.banco} {p.cuenta_tipo} {p.cuenta_numero}</div>}
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>⛵ {e.nombre} {e.tipo && <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 400 }}>· {e.tipo}{e.capacidad ? ` · cap ${e.capacidad}` : ""}</span>}</div>
+                  {e.capitan && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 4 }}>👨‍✈️ {e.capitan}</div>}
+                  {e.propietario_nombre && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>👤 {e.propietario_nombre}{e.propietario_documento && ` · ${e.propietario_documento}`}</div>}
+                  {(e.banco || e.cuenta_numero) && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>🏦 {e.banco} {e.cuenta_tipo} {e.cuenta_numero}</div>}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
-                  {flagRut && <span style={CHIP("#F5C84233", "#F5C842")}>⚠ Falta RUT</span>}
-                  {flagCert && <span style={CHIP("#F5C84233", "#F5C842")}>⚠ Falta Cert. Bancaria</span>}
-                  {!flagRut && !flagCert && <span style={CHIP("#10B98133", "#10B981")}>✓ Completo</span>}
+                  {flagRut && <span style={CHIP("#F5C84233", "#F5C842")}>Falta RUT</span>}
+                  {flagCert && <span style={CHIP("#F5C84233", "#F5C842")}>Falta Cert.Bancaria</span>}
+                  {flagBanco && <span style={CHIP("#F5C84233", "#F5C842")}>Falta Cuenta</span>}
+                  {!flagRut && !flagCert && !flagBanco && <span style={CHIP("#10B98133", "#10B981")}>✓ Completo</span>}
                 </div>
               </div>
             );
@@ -840,16 +839,22 @@ function ListaProveedoresModal({ proveedores, onClose, onNuevo, onEditar }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// Editor de embarcación registrada (proveedor externo) — CRUD + uploads
+// Editor de embarcación (crear/editar directo en el maestro `embarcaciones`)
+// Todos los campos opcionales excepto nombre. Los datos legales/bancarios y
+// docs se pueden completar en cualquier momento (bancos exigen cert < 30d).
 // ══════════════════════════════════════════════════════════════════════════
-function ProveedorModal({ row, user, onClose, onSaved }) {
+function EmbarcacionModal({ row, user, onClose, onSaved }) {
   const { isMobile } = useBreakpoint();
   const isEdit = !!row?.id;
   const [form, setForm] = useState({
-    nombre_embarcacion: row?.nombre_embarcacion || "",
+    nombre: row?.nombre || "",
     tipo: row?.tipo || "Lancha",
     capacidad: row?.capacidad || "",
     matricula: row?.matricula || "",
+    capitan: row?.capitan || "",
+    piloto_celular: row?.piloto_celular || "",
+    propiedad: row?.propiedad || "rentada",
+    estado: row?.estado || "activo",
     propietario_nombre: row?.propietario_nombre || "",
     propietario_documento: row?.propietario_documento || "",
     propietario_telefono: row?.propietario_telefono || "",
@@ -861,7 +866,6 @@ function ProveedorModal({ row, user, onClose, onSaved }) {
     rut_url: row?.rut_url || "",
     certificacion_bancaria_url: row?.certificacion_bancaria_url || "",
     notas: row?.notas || "",
-    activo: row?.activo ?? true,
   });
   const [saving, setSaving] = useState(false);
   const [uploadingRut, setUploadingRut] = useState(false);
@@ -875,18 +879,18 @@ function ProveedorModal({ row, user, onClose, onSaved }) {
     setUp(true); setErr(null);
     try {
       const ext = (file.name.split(".").pop() || "pdf").toLowerCase();
-      const proveedorId = row?.id || `nuevo-${Date.now()}`;
-      const path = `${proveedorId}/${tipo}-${Date.now()}.${ext}`;
+      const idBase = row?.id || `nueva-${Date.now()}`;
+      const path = `${idBase}/${tipo}-${Date.now()}.${ext}`;
       const { error: upErr } = await supabase.storage.from("embarcacion-docs").upload(path, file, { upsert: true, contentType: file.type });
       if (upErr) throw upErr;
       const { data: pub } = supabase.storage.from("embarcacion-docs").getPublicUrl(path);
       const url = pub?.publicUrl;
       const campo = tipo === "rut" ? "rut_url" : "certificacion_bancaria_url";
       set(campo, url);
-      // Si es edición y ya existe, guardar de una para persistencia inmediata
+      // Si es edición, persistir de inmediato (cert bancaria se puede actualizar siempre)
       if (isEdit) {
-        await supabase.from("embarcacion_proveedores").update({ [campo]: url }).eq("id", row.id);
-        logAccion({ modulo: "embarcaciones", accion: "actualizar_doc", tabla: "embarcacion_proveedores", registroId: row.id, datosDespues: { campo, url } });
+        await supabase.from("embarcaciones").update({ [campo]: url }).eq("id", row.id);
+        logAccion({ modulo: "embarcaciones", accion: "actualizar_doc", tabla: "embarcaciones", registroId: row.id, datosDespues: { campo, url } });
       }
     } catch (e) {
       setErr(e.message || String(e));
@@ -896,22 +900,23 @@ function ProveedorModal({ row, user, onClose, onSaved }) {
   }
 
   async function guardar() {
-    if (!form.nombre_embarcacion.trim()) return setErr("Nombre de la embarcación obligatorio");
+    if (!form.nombre.trim()) return setErr("Nombre de la embarcación obligatorio");
     setSaving(true); setErr(null);
     try {
       const payload = {
         ...form,
         capacidad: form.capacidad === "" ? null : Number(form.capacidad),
-        created_by: user?.email || null,
       };
       if (isEdit) {
-        const { error } = await supabase.from("embarcacion_proveedores").update(payload).eq("id", row.id);
+        const { error } = await supabase.from("embarcaciones").update(payload).eq("id", row.id);
         if (error) throw error;
-        logAccion({ modulo: "embarcaciones", accion: "actualizar_proveedor", tabla: "embarcacion_proveedores", registroId: row.id, datosDespues: { nombre: payload.nombre_embarcacion } });
+        logAccion({ modulo: "embarcaciones", accion: "actualizar", tabla: "embarcaciones", registroId: row.id, datosDespues: { nombre: payload.nombre } });
       } else {
-        const { data, error } = await supabase.from("embarcacion_proveedores").insert(payload).select().single();
+        // Generar ID tipo EMB-RENT-<random8>
+        const id = `EMB-${(payload.propiedad || "rentada").slice(0, 4).toUpperCase()}-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+        const { data, error } = await supabase.from("embarcaciones").insert({ id, ...payload }).select().single();
         if (error) throw error;
-        logAccion({ modulo: "embarcaciones", accion: "crear_proveedor", tabla: "embarcacion_proveedores", registroId: data.id, datosDespues: { nombre: payload.nombre_embarcacion } });
+        logAccion({ modulo: "embarcaciones", accion: "crear", tabla: "embarcaciones", registroId: data.id, datosDespues: { nombre: payload.nombre } });
       }
       setSaving(false);
       onSaved();
@@ -921,23 +926,27 @@ function ProveedorModal({ row, user, onClose, onSaved }) {
     }
   }
 
-  const TIPOS = ["Lancha", "Deportiva", "Triton", "Yate", "Catamarán", "Bote", "Otro"];
-  const BANCOS = ["Bancolombia", "Banco de Bogotá", "Davivienda", "BBVA", "Banco Popular", "AV Villas", "Banco Caja Social", "Colpatria", "Nequi", "Daviplata", "Otro"];
+  const TIPOS = ["Lancha", "Deportiva", "Nativa", "Nativa/deportiva", "Rápida", "Yate", "Catamarán", "Compartida", "Bote", "Otro"];
+  const BANCOS = ["Bancolombia", "Banco de Bogotá", "Davivienda", "BBVA", "Banco Popular", "AV Villas", "Banco Caja Social", "Colpatria", "Scotiabank Colpatria", "Nequi", "Daviplata", "Otro"];
 
   return (
     <div onClick={onClose} style={modalBg}>
       <div onClick={e => e.stopPropagation()} style={{ ...modalBox(isMobile), maxWidth: 720 }}>
         <div style={modalHead}>
-          <h3 style={{ margin: 0, color: "#fff" }}>{isEdit ? "✎ Editar" : "➕ Registrar"} Embarcación</h3>
+          <h3 style={{ margin: 0, color: "#fff" }}>{isEdit ? "✎ Editar" : "➕ Nueva"} Embarcación</h3>
           <button onClick={onClose} style={btnClose}>×</button>
         </div>
         <div style={{ padding: 20, overflowY: "auto", flex: 1 }}>
+          <div style={{ padding: 10, background: "rgba(56,189,248,0.08)", borderRadius: 8, fontSize: 12, color: "rgba(255,255,255,0.75)", marginBottom: 16, lineHeight: 1.5 }}>
+            💡 Solo el <strong>nombre</strong> es obligatorio. Los demás datos pueden completarse después — no bloquean el zarpe.
+          </div>
+
           {/* Datos embarcación */}
           <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 8 }}>⛵ Embarcación</div>
           <div style={grid2(isMobile)}>
             <div>
               <label style={LS}>Nombre *</label>
-              <input style={IS} value={form.nombre_embarcacion} onChange={e => set("nombre_embarcacion", e.target.value)} placeholder="Ej: María Elena II" />
+              <input style={IS} value={form.nombre} onChange={e => set("nombre", e.target.value)} placeholder="Ej: María Elena II" />
             </div>
             <div>
               <label style={LS}>Tipo</label>
@@ -956,8 +965,35 @@ function ProveedorModal({ row, user, onClose, onSaved }) {
               <input style={IS} value={form.matricula} onChange={e => set("matricula", e.target.value)} placeholder="Ej: CO-0000-A" />
             </div>
           </div>
+          <div style={grid2(isMobile)}>
+            <div>
+              <label style={LS}>Capitán</label>
+              <input style={IS} value={form.capitan} onChange={e => set("capitan", e.target.value)} />
+            </div>
+            <div>
+              <label style={LS}>Teléfono capitán</label>
+              <input style={IS} value={form.piloto_celular} onChange={e => set("piloto_celular", e.target.value)} />
+            </div>
+          </div>
+          <div style={grid2(isMobile)}>
+            <div>
+              <label style={LS}>Propiedad</label>
+              <select style={IS} value={form.propiedad} onChange={e => set("propiedad", e.target.value)}>
+                <option value="rentada">Rentada</option>
+                <option value="propia">Propia</option>
+              </select>
+            </div>
+            <div>
+              <label style={LS}>Estado</label>
+              <select style={IS} value={form.estado} onChange={e => set("estado", e.target.value)}>
+                <option value="activo">Activo</option>
+                <option value="inactivo">Inactivo</option>
+                <option value="mantenimiento">Mantenimiento</option>
+              </select>
+            </div>
+          </div>
 
-          {/* Propietario */}
+          {/* Propietario (para rentadas — pero se muestra siempre) */}
           <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginTop: 14, marginBottom: 8 }}>👤 Propietario</div>
           <div style={grid2(isMobile)}>
             <div>
@@ -1012,7 +1048,6 @@ function ProveedorModal({ row, user, onClose, onSaved }) {
           {/* Adjuntos */}
           <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginTop: 14, marginBottom: 8 }}>📎 Documentos</div>
 
-          {/* RUT */}
           <div style={{ marginBottom: 14 }}>
             <label style={LS}>RUT</label>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -1026,7 +1061,6 @@ function ProveedorModal({ row, user, onClose, onSaved }) {
             </div>
           </div>
 
-          {/* Cert bancaria */}
           <div style={{ marginBottom: 14 }}>
             <label style={LS}>Certificación bancaria</label>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -1049,11 +1083,6 @@ function ProveedorModal({ row, user, onClose, onSaved }) {
               value={form.notas} onChange={e => set("notas", e.target.value)}
               placeholder="Tarifas de referencia, condiciones, etc." />
           </div>
-
-          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, color: "#fff" }}>
-            <input type="checkbox" checked={form.activo} onChange={e => set("activo", e.target.checked)} />
-            Activo (aparece en el dropdown de solicitudes)
-          </label>
 
           {err && <div style={{ color: "#EF4444", fontSize: 13, marginTop: 12 }}>{err}</div>}
         </div>
