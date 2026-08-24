@@ -921,7 +921,12 @@ function EmbarcacionModal({ row, user, onClose, onSaved }) {
       setSaving(false);
       onSaved();
     } catch (e) {
-      setErr(e.message || String(e));
+      // Índice único case-insensitive → mensaje humano
+      if (String(e.code) === "23505" || /ux_embarcaciones_nombre_norm|duplicate key/i.test(e.message || "")) {
+        setErr(`Ya existe una embarcación llamada "${form.nombre.trim()}". Búscala en la lista de rentadas y edítala en vez de crear una nueva.`);
+      } else {
+        setErr(e.message || String(e));
+      }
       setSaving(false);
     }
   }
