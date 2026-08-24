@@ -469,7 +469,7 @@ function GestionModal({ row, embarcaciones, user, onClose, onSaved, onEditarEmba
   }
 
   async function asignar() {
-    if (!form.embarcacion_id) return setErr("Elige una embarcación. Si no está registrada, créala con el botón + al lado del selector.");
+    if (!form.embarcacion_id) return setErr("Elige una embarcación rentada. Si no está registrada, créala con el botón + al lado del selector.");
     const emb = embMap.get(form.embarcacion_id);
     await actualizar({
       estado: "asignada",
@@ -615,21 +615,14 @@ function GestionModal({ row, embarcaciones, user, onClose, onSaved, onEditarEmba
           {/* Sección asignación (siempre visible pero deshabilitada según estado) */}
           <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 8 }}>⛵ Asignación</div>
           <div style={{ marginBottom: 14 }}>
-            <label style={LS}>Embarcación</label>
+            <label style={LS}>Embarcación rentada</label>
             <div style={{ display: "flex", gap: 6 }}>
               <select style={{ ...IS, flex: 1 }} value={form.embarcacion_id}
                 onChange={e => set("embarcacion_id", e.target.value)}>
                 <option value="">— Selecciona una —</option>
-                <optgroup label="🏢 Flota propia">
-                  {embarcaciones.filter(e => e.propiedad === "propia" && e.estado !== "inactivo").map(e => (
-                    <option key={e.id} value={e.id}>{e.nombre} · {e.tipo || ""} · cap {e.capacidad || "?"}</option>
-                  ))}
-                </optgroup>
-                <optgroup label="⛵ Rentadas">
-                  {embarcaciones.filter(e => e.propiedad === "rentada" && e.estado !== "inactivo").map(e => (
-                    <option key={e.id} value={e.id}>{e.nombre}{e.propietario_nombre ? ` · ${e.propietario_nombre}` : ""} · cap {e.capacidad || "?"}</option>
-                  ))}
-                </optgroup>
+                {embarcaciones.filter(e => e.propiedad === "rentada" && e.estado !== "inactivo").map(e => (
+                  <option key={e.id} value={e.id}>{e.nombre}{e.propietario_nombre ? ` · ${e.propietario_nombre}` : ""} · cap {e.capacidad || "?"}</option>
+                ))}
               </select>
               <button onClick={onNuevaEmbarcacion} title="Registrar nueva embarcación rentada"
                 style={{ padding: "0 14px", borderRadius: 8, border: "none", background: "#10B981", color: "#fff", fontSize: 20, fontWeight: 700, cursor: "pointer" }}>+</button>
