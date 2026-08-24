@@ -66,6 +66,7 @@ export default function Analitica({ externo = false }) {
   // Fase 2.1: ad_spend + CAC/ROAS
   const [adSpend, setAdSpend] = useState([]);     // filas ad_spend del periodo
   const [nuevoAdSpend, setNuevoAdSpend] = useState({ canal: "meta_ads", semana_ini: "", monto: "", campana: "" });
+  const [periodoRevenue, setPeriodoRevenue] = useState({ clientes: 0, revenue: 0 });
   const [loading, setLoading] = useState(true);
 
   const periodos = [
@@ -228,6 +229,10 @@ export default function Analitica({ externo = false }) {
 
     // ── Fase 2.1 AtolonTrack: ad_spend, CAC, ROAS ─────────────────────────
     setAdSpend(adSpendRes.data || []);
+    setPeriodoRevenue({
+      clientes: resConvList.length,
+      revenue: resConvList.reduce((s, r) => s + (r.total || 0), 0),
+    });
 
     // ── Calidad de Atribución (Paid Media) + filas para Meta CAPI / Google ────
     // Por cada venta pagada self-service: resolvemos click-id y fuente vía la
@@ -779,8 +784,8 @@ export default function Analitica({ externo = false }) {
         adSpend={adSpend}
         nuevoAdSpend={nuevoAdSpend}
         setNuevoAdSpend={setNuevoAdSpend}
-        clientesNuevosPeriodo={resConvList.length}
-        revenueDigitalPeriodo={resConvList.reduce((s, r) => s + (r.total || 0), 0)}
+        clientesNuevosPeriodo={periodoRevenue.clientes}
+        revenueDigitalPeriodo={periodoRevenue.revenue}
         onReload={fetchAll}
       />
 
