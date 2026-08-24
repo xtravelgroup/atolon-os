@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "../lib/supabase";
 import { clasificarOrigenReserva, clasificarOrigen, ORIGEN_BUCKETS, ORIGEN_LABELS } from "../lib/origenClassifier.js";
+import { AUDIENCIAS, cargarAudiencia, exportarMeta, exportarGoogle } from "../lib/audienciasExport.js";
 
 const B = {
   navy: "#0a1628", navyMid: "#0f1f3d", navyLight: "#1a2f52",
@@ -62,6 +63,9 @@ export default function Analitica({ externo = false }) {
   // Fase 1 AtolonTrack: LTV real por cliente digital (v_ltv_cliente_digital)
   const [ltvStats, setLtvStats] = useState(null); // KPIs agregados
   const [ltvTop, setLtvTop] = useState([]);       // top 10 VIPs digitales
+  // Fase 2.1: ad_spend + CAC/ROAS
+  const [adSpend, setAdSpend] = useState([]);     // filas ad_spend del periodo
+  const [nuevoAdSpend, setNuevoAdSpend] = useState({ canal: "meta_ads", semana_ini: "", monto: "", campana: "" });
   const [loading, setLoading] = useState(true);
 
   const periodos = [
@@ -92,7 +96,7 @@ export default function Analitica({ externo = false }) {
     if (externo && desde < TRACK_MIN_EXTERNO) desde = TRACK_MIN_EXTERNO;
     const hasta = periodo === "custom" && customTo ? new Date(customTo + "T23:59:59").toISOString() : new Date().toISOString();
 
-    const [sesRes, embRes, evRes, resConvRes, atribRes, abandRes, ingresosRes, usuariosRes, ltvRes] = await Promise.all([
+    const [sesRes, embRes, evRes, resConvRes, atribRes, abandRes, ingresosRes, usuariosRes, ltvRes, adSpendRes] = await Promise.all([
       supabase.from("track_sesiones").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_embudos").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_eventos").select("tipo, categoria, datos, ts, sesion_id").gte("ts", desde).lte("ts", hasta),
@@ -109,6 +113,9 @@ export default function Analitica({ externo = false }) {
       // período: LTV = valor de vida, no del período). Se filtra por canal
       // según el switch "origen" que use el usuario.
       supabase.from("v_ltv_cliente_digital").select("nombre, email, telefono, canal_adquisicion, visitas, ltv, ticket_promedio, primera_visita, ultima_visita, segmento"),
+      // Ad spend del período (para CAC y ROAS). Trae solo lo que cae en el
+      // período actual — cambia con el selector de fechas.
+      supabase.from("ad_spend").select("*").gte("semana_ini", desde.slice(0, 10)).lte("semana_ini", hasta.slice(0, 10)).order("semana_ini", { ascending: false }),
     ]);
 
     const rawSes       = sesRes.data      || [];   // sin filtrar (panel comparativo de orígenes)
@@ -218,6 +225,9 @@ export default function Analitica({ externo = false }) {
       setLtvStats(null);
       setLtvTop([]);
     }
+
+    // ── Fase 2.1 AtolonTrack: ad_spend, CAC, ROAS ─────────────────────────
+    setAdSpend(adSpendRes.data || []);
 
     // ── Calidad de Atribución (Paid Media) + filas para Meta CAPI / Google ────
     // Por cada venta pagada self-service: resolvemos click-id y fuente vía la
@@ -763,6 +773,32 @@ export default function Analitica({ externo = false }) {
           )}
         </>
       )}
+
+      {/* ═══ Fase 2.1 AtolonTrack: CAC + ROAS + ad_spend CRUD ═════════════ */}
+      <AdSpendPanel
+        adSpend={adSpend}
+        nuevoAdSpend={nuevoAdSpend}
+        setNuevoAdSpend={setNuevoAdSpend}
+        clientesNuevosPeriodo={resConvList.length}
+        revenueDigitalPeriodo={resConvList.reduce((s, r) => s + (r.total || 0), 0)}
+        onReload={fetchAll}
+      />
+
+      {/* ═══ Fase 2.2 AtolonTrack: Exportador audiencias Meta/Google ══════ */}
+      <AudienciasPanel />
+
+      {/* ═══ Fase 3.1: Cohortes de retención ═════════════════════════════ */}
+      <CohortesPanel />
+
+      {/* ═══ Fase 3.2: Atribución multi-touch time-decay ═════════════════ */}
+      <AtribucionMultitouchPanel />
+
+      {/* ═══ Fase 3.3: Churn / re-engagement predictor ═══════════════════ */}
+      <ChurnPanel />
+
+      {/* ═══ Fase 3.4: NPS dashboard ═════════════════════════════════════ */}
+      <NPSPanel />
+
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
         {/* Embudo */}
@@ -1492,6 +1528,713 @@ function TrackingConfigPanel() {
             {saved && <span style={{ fontSize: 13, color: B.success, fontWeight: 700 }}>✓ Guardado · activo en el próximo ingreso al booking</span>}
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Fase 2.1 AtolonTrack — CAC + ROAS + ad_spend CRUD
+// ══════════════════════════════════════════════════════════════════════════
+
+function AdSpendPanel({ adSpend, nuevoAdSpend, setNuevoAdSpend, clientesNuevosPeriodo, revenueDigitalPeriodo, onReload }) {
+  const fmtCOP = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
+  const CANALES = [
+    { key: "meta_ads",     label: "Meta Ads",     icon: "📘", color: "#1877F2" },
+    { key: "google_ads",   label: "Google Ads",   icon: "🔵", color: "#4285F4" },
+    { key: "tiktok_ads",   label: "TikTok Ads",   icon: "🎵", color: "#000000" },
+    { key: "influencers",  label: "Influencers",  icon: "✨", color: "#E1306C" },
+    { key: "seo",          label: "SEO / Orgánico", icon: "🌱", color: "#34A853" },
+    { key: "otros",        label: "Otros",        icon: "📊", color: "#888" },
+  ];
+  const labelCanal = (k) => CANALES.find(c => c.key === k)?.label || k;
+  const colorCanal = (k) => CANALES.find(c => c.key === k)?.color || "#888";
+
+  // Totales agregados
+  const totalSpend = adSpend.reduce((s, r) => s + Number(r.monto || 0), 0);
+  const cac = clientesNuevosPeriodo > 0 ? Math.round(totalSpend / clientesNuevosPeriodo) : null;
+  const roas = totalSpend > 0 ? (revenueDigitalPeriodo / totalSpend) : null;
+
+  // Split por canal
+  const porCanal = {};
+  adSpend.forEach(r => {
+    porCanal[r.canal] = (porCanal[r.canal] || 0) + Number(r.monto || 0);
+  });
+
+  async function guardar() {
+    const { canal, semana_ini, monto, campana } = nuevoAdSpend;
+    if (!canal || !semana_ini || !monto) return alert("Completa canal, semana y monto.");
+    const { supabase } = await import("../lib/supabase");
+    const { error } = await supabase.from("ad_spend").upsert({
+      canal, semana_ini, monto: Number(monto), campana: campana || null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "canal,semana_ini,campana" });
+    if (error) return alert("Error: " + error.message);
+    setNuevoAdSpend({ canal: "meta_ads", semana_ini: "", monto: "", campana: "" });
+    onReload();
+  }
+
+  async function borrar(id) {
+    if (!confirm("¿Borrar este registro de inversión?")) return;
+    const { supabase } = await import("../lib/supabase");
+    await supabase.from("ad_spend").delete().eq("id", id);
+    onReload();
+  }
+
+  const cardBg = "rgba(15, 25, 55, 0.6)";
+
+  return (
+    <div style={{ background: "rgba(15, 25, 55, 0.4)", borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)", marginBottom: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#fff" }}>💰 CAC & ROAS — Inversión de Pauta Digital</h3>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>
+            Inversión del período seleccionado vs clientes nuevos y revenue del mismo período.
+          </div>
+        </div>
+      </div>
+
+      {/* KPIs CAC/ROAS */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 14, marginTop: 16 }}>
+        <div style={{ background: cardBg, borderRadius: 10, padding: "16px 20px" }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>Inversión Total</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "#fff", marginTop: 6 }}>{fmtCOP(totalSpend)}</div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>{adSpend.length} registros</div>
+        </div>
+        <div style={{ background: cardBg, borderRadius: 10, padding: "16px 20px" }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>CAC</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: cac === null ? "rgba(255,255,255,0.3)" : cac > 300000 ? "#EF4444" : cac > 150000 ? "#F59E0B" : "#10B981", marginTop: 6 }}>
+            {cac === null ? "—" : fmtCOP(cac)}
+          </div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>Costo por adquisición · {clientesNuevosPeriodo} clientes</div>
+        </div>
+        <div style={{ background: cardBg, borderRadius: 10, padding: "16px 20px" }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>ROAS</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: roas === null ? "rgba(255,255,255,0.3)" : roas >= 3 ? "#10B981" : roas >= 1 ? "#F59E0B" : "#EF4444", marginTop: 6 }}>
+            {roas === null ? "—" : `${roas.toFixed(2)}×`}
+          </div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>Revenue / Inversión</div>
+        </div>
+        <div style={{ background: cardBg, borderRadius: 10, padding: "16px 20px" }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>Revenue Digital</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "#38BDF8", marginTop: 6 }}>{fmtCOP(revenueDigitalPeriodo)}</div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>Reservas del período</div>
+        </div>
+      </div>
+
+      {/* Split por canal */}
+      {Object.keys(porCanal).length > 0 && (
+        <div style={{ marginTop: 20, display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {Object.entries(porCanal).sort((a, b) => b[1] - a[1]).map(([canal, monto]) => (
+            <div key={canal} style={{ padding: "8px 14px", borderRadius: 10, background: cardBg, borderLeft: `3px solid ${colorCanal(canal)}`, fontSize: 12 }}>
+              <span style={{ color: "rgba(255,255,255,0.6)" }}>{labelCanal(canal)}</span>
+              <strong style={{ color: "#fff", marginLeft: 8 }}>{fmtCOP(monto)}</strong>
+              <span style={{ color: "rgba(255,255,255,0.4)", marginLeft: 6 }}>({((monto/totalSpend)*100).toFixed(0)}%)</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Formulario nuevo registro */}
+      <div style={{ marginTop: 24, padding: 16, background: cardBg, borderRadius: 10 }}>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 10 }}>➕ Registrar inversión</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
+          <select value={nuevoAdSpend.canal} onChange={e => setNuevoAdSpend({ ...nuevoAdSpend, canal: e.target.value })}
+            style={inputStyleAd}>
+            {CANALES.map(c => <option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}
+          </select>
+          <input type="date" value={nuevoAdSpend.semana_ini} onChange={e => setNuevoAdSpend({ ...nuevoAdSpend, semana_ini: e.target.value })}
+            placeholder="Lunes de la semana" style={inputStyleAd} />
+          <input type="number" value={nuevoAdSpend.monto} onChange={e => setNuevoAdSpend({ ...nuevoAdSpend, monto: e.target.value })}
+            placeholder="Monto COP" style={inputStyleAd} />
+          <input value={nuevoAdSpend.campana} onChange={e => setNuevoAdSpend({ ...nuevoAdSpend, campana: e.target.value })}
+            placeholder="Campaña (opcional)" style={inputStyleAd} />
+          <button onClick={guardar} style={{ padding: "10px 16px", background: "#10B981", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>
+            Guardar
+          </button>
+        </div>
+      </div>
+
+      {/* Tabla de inversiones del período */}
+      {adSpend.length > 0 && (
+        <div style={{ marginTop: 16, overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 600 }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+                <th style={thAd}>Semana</th>
+                <th style={thAd}>Canal</th>
+                <th style={thAd}>Campaña</th>
+                <th style={{ ...thAd, textAlign: "right" }}>Monto</th>
+                <th style={thAd}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {adSpend.map(r => (
+                <tr key={r.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                  <td style={tdAd}>{r.semana_ini}</td>
+                  <td style={tdAd}>
+                    <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 6, background: colorCanal(r.canal) + "33", color: colorCanal(r.canal), fontWeight: 700, fontSize: 11 }}>
+                      {labelCanal(r.canal)}
+                    </span>
+                  </td>
+                  <td style={tdAd}>{r.campana || "—"}</td>
+                  <td style={{ ...tdAd, textAlign: "right", fontWeight: 700, color: "#fff" }}>{fmtCOP(r.monto)}</td>
+                  <td style={{ ...tdAd, textAlign: "right" }}>
+                    <button onClick={() => borrar(r.id)} style={{ background: "transparent", border: "none", color: "#EF4444", cursor: "pointer", fontSize: 12 }}>Borrar</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const inputStyleAd = {
+  padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)",
+  background: "#0A1A3C", color: "#fff", fontSize: 13, outline: "none",
+};
+const thAd = { padding: "8px 10px", textAlign: "left", fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 };
+const tdAd = { padding: "9px 10px", color: "rgba(255,255,255,0.85)" };
+
+// ══════════════════════════════════════════════════════════════════════════
+// Fase 2.2 AtolonTrack — Exportador de audiencias Meta / Google
+// ══════════════════════════════════════════════════════════════════════════
+
+function AudienciasPanel() {
+  const [counts, setCounts] = useState({});
+  const [preview, setPreview] = useState(null); // { key, rows }
+  const [loading, setLoading] = useState(null); // key en carga
+
+  useEffect(() => {
+    (async () => {
+      const out = {};
+      for (const key of Object.keys(AUDIENCIAS)) {
+        try {
+          const rows = await cargarAudiencia(key);
+          out[key] = rows.length;
+        } catch { out[key] = 0; }
+      }
+      setCounts(out);
+    })();
+  }, []);
+
+  async function verPreview(key) {
+    setLoading(key + ":preview");
+    try {
+      const rows = await cargarAudiencia(key);
+      setPreview({ key, rows });
+    } catch (e) {
+      alert("Error: " + e.message);
+    }
+    setLoading(null);
+  }
+
+  async function descargarMeta(key) {
+    setLoading(key + ":meta");
+    try { await exportarMeta(key); } catch (e) { alert("Error: " + e.message); }
+    setLoading(null);
+  }
+  async function descargarGoogle(key) {
+    setLoading(key + ":google");
+    try { await exportarGoogle(key); } catch (e) { alert("Error: " + e.message); }
+    setLoading(null);
+  }
+
+  const cardBg = "rgba(15, 25, 55, 0.6)";
+  const AUD_ICONS = {
+    vips_digital:      "💎",
+    recurrentes:       "🔁",
+    reservas_sin_pago: "🛒",
+    leads_wa_sin_conv: "💬",
+    extranjeros:       "🌎",
+  };
+  const AUD_TIPS = {
+    vips_digital:      "Seed lookalike Meta 1% · pauta ROAS premium",
+    recurrentes:       "Alto match rate para lookalike CORE",
+    reservas_sin_pago: "Retargeting con oferta de recuperación",
+    leads_wa_sin_conv: "Re-engagement WA outbound + Meta retargeting",
+    extranjeros:       "Segmentación países en Meta / GDS",
+  };
+
+  return (
+    <div style={{ background: "rgba(15, 25, 55, 0.4)", borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)", marginBottom: 20 }}>
+      <div style={{ marginBottom: 4 }}>
+        <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#fff" }}>🎯 Audiencias para Meta / Google</h3>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>
+          Descarga listas segmentadas listas para subir a Custom Audiences (Meta) o Customer Match (Google).
+          Meta hashea al subir; formato compatible directo.
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, marginTop: 18 }}>
+        {Object.entries(AUDIENCIAS).map(([key, cfg]) => (
+          <div key={key} style={{ background: cardBg, borderRadius: 12, padding: 18, borderLeft: `3px solid ${counts[key] > 0 ? "#10B981" : "#666"}` }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+              <div>
+                <div style={{ fontSize: 20 }}>{AUD_ICONS[key] || "🎯"}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginTop: 4 }}>{cfg.label}</div>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>{AUD_TIPS[key]}</div>
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: counts[key] > 0 ? "#10B981" : "rgba(255,255,255,0.25)" }}>
+                {counts[key] ?? "…"}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 6, marginTop: 14, flexWrap: "wrap" }}>
+              <button onClick={() => verPreview(key)} disabled={!counts[key] || loading === key + ":preview"}
+                style={btnAud("rgba(255,255,255,0.08)", "#fff", !counts[key])}>
+                {loading === key + ":preview" ? "…" : "👁 Ver"}
+              </button>
+              <button onClick={() => descargarMeta(key)} disabled={!counts[key] || loading === key + ":meta"}
+                style={btnAud("#1877F233", "#1877F2", !counts[key])}>
+                {loading === key + ":meta" ? "…" : "📘 Meta CSV"}
+              </button>
+              <button onClick={() => descargarGoogle(key)} disabled={!counts[key] || loading === key + ":google"}
+                style={btnAud("#4285F433", "#4285F4", !counts[key])}>
+                {loading === key + ":google" ? "…" : "🔵 Google CSV"}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Modal preview */}
+      {preview && (
+        <div onClick={() => setPreview(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#0a1628", borderRadius: 12, padding: 24, maxWidth: 900, width: "100%", maxHeight: "85vh", overflowY: "auto", border: "1px solid rgba(255,255,255,0.1)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <h3 style={{ margin: 0, color: "#fff" }}>👁 Preview: {AUDIENCIAS[preview.key].label}</h3>
+              <button onClick={() => setPreview(null)} style={{ background: "transparent", border: "none", color: "#fff", fontSize: 24, cursor: "pointer" }}>×</button>
+            </div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 12 }}>
+              Mostrando {Math.min(preview.rows.length, 50)} de {preview.rows.length} registros
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 600 }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+                    {Object.keys(preview.rows[0] || {}).slice(0, 6).map(k => (
+                      <th key={k} style={{ ...thAd, textTransform: "none" }}>{k}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.rows.slice(0, 50).map((r, i) => (
+                    <tr key={i} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                      {Object.keys(preview.rows[0] || {}).slice(0, 6).map(k => (
+                        <td key={k} style={tdAd}>{String(r[k] ?? "").slice(0, 40)}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function btnAud(bg, fg, disabled) {
+  return {
+    padding: "8px 12px", background: bg, color: fg, border: "none",
+    borderRadius: 6, fontWeight: 700, fontSize: 11, cursor: disabled ? "default" : "pointer",
+    opacity: disabled ? 0.4 : 1, letterSpacing: 0.3,
+  };
+}
+
+const cardBgLite = "rgba(15, 25, 55, 0.6)";
+const fmtCOP = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
+const fmtMes = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleDateString("es-CO", { month: "short", year: "2-digit" });
+};
+
+// ══════════════════════════════════════════════════════════════════════════
+// Fase 3.1 AtolonTrack — Heatmap de cohortes de retención
+// ══════════════════════════════════════════════════════════════════════════
+function CohortesPanel() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("v_cohortes_retencion_digital").select("*").limit(24);
+      setRows(data || []);
+      setLoading(false);
+    })();
+  }, []);
+
+  const pctColor = (v) => v >= 30 ? "#10B981" : v >= 15 ? "#F59E0B" : v >= 5 ? "#EAB308" : v > 0 ? "#EF4444" : "rgba(255,255,255,0.15)";
+
+  return (
+    <div style={{ background: "rgba(15, 25, 55, 0.4)", borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)", marginBottom: 20 }}>
+      <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#fff" }}>📊 Cohortes de Retención Digital</h3>
+      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3, marginBottom: 16 }}>
+        % de clientes de cada mes de adquisición que volvieron dentro de 30 / 60 / 90 / 365 días.
+      </div>
+      {loading && <div style={{ color: "rgba(255,255,255,0.5)" }}>Cargando…</div>}
+      {!loading && rows.length === 0 && <div style={{ color: "rgba(255,255,255,0.5)" }}>Aún no hay cohortes suficientes.</div>}
+      {!loading && rows.length > 0 && (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 640 }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+                <th style={thAd}>Cohorte</th>
+                <th style={{ ...thAd, textAlign: "center" }}>Canal</th>
+                <th style={{ ...thAd, textAlign: "right" }}>Tamaño</th>
+                <th style={{ ...thAd, textAlign: "center" }}>30d</th>
+                <th style={{ ...thAd, textAlign: "center" }}>60d</th>
+                <th style={{ ...thAd, textAlign: "center" }}>90d</th>
+                <th style={{ ...thAd, textAlign: "center" }}>365d</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                  <td style={tdAd}>{fmtMes(r.cohorte_mes)}</td>
+                  <td style={{ ...tdAd, textAlign: "center", fontWeight: 700, color: r.canal_adquisicion === "whatsapp" ? "#25D366" : "#38BDF8" }}>
+                    {r.canal_adquisicion === "whatsapp" ? "WA" : "WEB"}
+                  </td>
+                  <td style={{ ...tdAd, textAlign: "right", fontWeight: 700 }}>{r.tamano_cohorte}</td>
+                  {["ret_30d_pct", "ret_60d_pct", "ret_90d_pct", "ret_365d_pct"].map((k, j) => (
+                    <td key={j} style={{ padding: "6px", textAlign: "center" }}>
+                      <span style={{ display: "inline-block", minWidth: 44, padding: "5px 8px", borderRadius: 6, background: pctColor(r[k]) + "33", color: pctColor(r[k]), fontWeight: 800, fontSize: 11 }}>
+                        {r[k]}%
+                      </span>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Fase 3.2 AtolonTrack — Atribución multi-touch time-decay
+// ══════════════════════════════════════════════════════════════════════════
+function AtribucionMultitouchPanel() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("v_atribucion_multitouch").select("*");
+      setRows(data || []);
+      setLoading(false);
+    })();
+  }, []);
+
+  const total = rows.reduce((s, r) => s + Number(r.revenue_atribuido_multitouch || 0), 0);
+
+  return (
+    <div style={{ background: "rgba(15, 25, 55, 0.4)", borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)", marginBottom: 20 }}>
+      <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#fff" }}>🎯 Atribución Multi-Touch (Time-Decay 7 días)</h3>
+      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3, marginBottom: 16 }}>
+        Reparte cada venta entre TODAS las sesiones previas del cliente (ventana 30d), ponderando por recencia con half-life 7 días. Comparativa vs first/last touch para ver qué canales están sub-atribuidos por el modelo simple.
+      </div>
+      {loading && <div style={{ color: "rgba(255,255,255,0.5)" }}>Cargando…</div>}
+      {!loading && rows.length === 0 && <div style={{ color: "rgba(255,255,255,0.5)" }}>Sin ventas con touchpoints trackeados en el período.</div>}
+      {!loading && rows.length > 0 && (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 640 }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+                <th style={thAd}>Fuente</th>
+                <th style={{ ...thAd, textAlign: "right" }}>Ventas Touched</th>
+                <th style={{ ...thAd, textAlign: "right" }}>Revenue Multi-touch</th>
+                <th style={{ ...thAd, textAlign: "right" }}>vs Last</th>
+                <th style={{ ...thAd, textAlign: "right" }}>vs First</th>
+                <th style={{ ...thAd, textAlign: "right" }}>% Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => {
+                const mt = Number(r.revenue_atribuido_multitouch || 0);
+                const last = Number(r.revenue_last_touch || 0);
+                const first = Number(r.revenue_first_touch || 0);
+                const diffLast = last > 0 ? ((mt - last) / last * 100) : null;
+                const diffFirst = first > 0 ? ((mt - first) / first * 100) : null;
+                return (
+                  <tr key={i} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                    <td style={{ ...tdAd, fontWeight: 700, color: "#fff" }}>{r.fuente}</td>
+                    <td style={{ ...tdAd, textAlign: "right" }}>{r.ventas_touched}</td>
+                    <td style={{ ...tdAd, textAlign: "right", fontWeight: 800, color: "#38BDF8" }}>{fmtCOP(mt)}</td>
+                    <td style={{ ...tdAd, textAlign: "right", color: diffLast === null ? "rgba(255,255,255,0.3)" : diffLast > 0 ? "#10B981" : "#EF4444" }}>
+                      {diffLast === null ? "—" : (diffLast > 0 ? "+" : "") + diffLast.toFixed(0) + "%"}
+                    </td>
+                    <td style={{ ...tdAd, textAlign: "right", color: diffFirst === null ? "rgba(255,255,255,0.3)" : diffFirst > 0 ? "#10B981" : "#EF4444" }}>
+                      {diffFirst === null ? "—" : (diffFirst > 0 ? "+" : "") + diffFirst.toFixed(0) + "%"}
+                    </td>
+                    <td style={{ ...tdAd, textAlign: "right", color: "rgba(255,255,255,0.7)" }}>{total > 0 ? ((mt/total)*100).toFixed(1) : 0}%</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Fase 3.3 AtolonTrack — Churn / re-engagement predictor
+// ══════════════════════════════════════════════════════════════════════════
+function ChurnPanel() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("v_churn_riesgo_digital").select("*").order("dias_desde_ultima", { ascending: false }).limit(50);
+      setRows(data || []);
+      setLoading(false);
+    })();
+  }, []);
+
+  const enRiesgo = rows.filter(r => r.en_riesgo);
+  const churn    = rows.filter(r => r.estado_engagement === "churn");
+  const ltvEnRiesgo = enRiesgo.reduce((s, r) => s + Number(r.ltv || 0), 0);
+
+  function exportarColaWA() {
+    if (enRiesgo.length === 0) return alert("Sin clientes en riesgo.");
+    const csv = ["nombre,telefono,visitas,ltv,ultima_visita,dias_desde,estado"]
+      .concat(enRiesgo.map(r => [
+        (r.nombre || "").replace(/,/g, " "),
+        r.telefono || "",
+        r.visitas,
+        r.ltv,
+        r.ultima_visita || "",
+        r.dias_desde_ultima,
+        r.estado_engagement,
+      ].join(","))).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `atolon-churn-wa-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div style={{ background: "rgba(15, 25, 55, 0.4)", borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)", marginBottom: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#fff" }}>⏰ Clientes en Riesgo de Churn</h3>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>
+            Clientes con 2+ visitas cuya última visita superó su gap típico entre reservas × 1.5. Cola priorizada para re-engagement WA.
+          </div>
+        </div>
+        <button onClick={exportarColaWA} disabled={enRiesgo.length === 0}
+          style={{ padding: "10px 16px", background: "#25D366", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: enRiesgo.length ? "pointer" : "default", opacity: enRiesgo.length ? 1 : 0.4 }}>
+          📥 Descargar Cola WA ({enRiesgo.length})
+        </button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginTop: 18 }}>
+        <div style={{ background: cardBgLite, borderRadius: 10, padding: 14 }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700 }}>Recurrentes</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#fff", marginTop: 4 }}>{rows.length}</div>
+        </div>
+        <div style={{ background: cardBgLite, borderRadius: 10, padding: 14 }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700 }}>En Riesgo</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#F59E0B", marginTop: 4 }}>{enRiesgo.length}</div>
+        </div>
+        <div style={{ background: cardBgLite, borderRadius: 10, padding: 14 }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700 }}>Churn</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#EF4444", marginTop: 4 }}>{churn.length}</div>
+        </div>
+        <div style={{ background: cardBgLite, borderRadius: 10, padding: 14 }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700 }}>LTV en Riesgo</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#38BDF8", marginTop: 4 }}>{fmtCOP(ltvEnRiesgo)}</div>
+        </div>
+      </div>
+
+      {loading && <div style={{ color: "rgba(255,255,255,0.5)", marginTop: 16 }}>Cargando…</div>}
+      {!loading && enRiesgo.length > 0 && (
+        <div style={{ overflowX: "auto", marginTop: 16 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 700 }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+                <th style={thAd}>Cliente</th>
+                <th style={thAd}>Teléfono</th>
+                <th style={{ ...thAd, textAlign: "right" }}>Visitas</th>
+                <th style={{ ...thAd, textAlign: "right" }}>LTV</th>
+                <th style={thAd}>Última</th>
+                <th style={{ ...thAd, textAlign: "right" }}>Días sin volver</th>
+                <th style={{ ...thAd, textAlign: "center" }}>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {enRiesgo.slice(0, 20).map((r, i) => {
+                const nom = (r.nombre || "—").replace(/\b\w/g, x => x.toUpperCase());
+                const color = r.estado_engagement === "churn" ? "#EF4444" : "#F59E0B";
+                return (
+                  <tr key={i} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                    <td style={{ ...tdAd, color: "#fff", fontWeight: 600 }}>{nom}</td>
+                    <td style={tdAd}>{r.telefono || "—"}</td>
+                    <td style={{ ...tdAd, textAlign: "right", fontWeight: 700 }}>{r.visitas}</td>
+                    <td style={{ ...tdAd, textAlign: "right", color: "#38BDF8", fontWeight: 700 }}>{fmtCOP(r.ltv)}</td>
+                    <td style={tdAd}>{r.ultima_visita?.slice(0, 10)}</td>
+                    <td style={{ ...tdAd, textAlign: "right", color, fontWeight: 700 }}>{r.dias_desde_ultima}d</td>
+                    <td style={{ ...tdAd, textAlign: "center" }}>
+                      <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 12, background: color + "33", color, fontWeight: 700, fontSize: 10, letterSpacing: 0.5 }}>
+                        {r.estado_engagement === "churn" ? "CHURN" : "RIESGO"}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Fase 3.4 AtolonTrack — NPS dashboard
+// ══════════════════════════════════════════════════════════════════════════
+function NPSPanel() {
+  const [respuestas, setRespuestas] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("nps_respuestas")
+        .select("id,reserva_id,cliente_nombre,telefono,score,categoria,comentario,canal_origen,responded_at,google_review_click")
+        .not("responded_at", "is", null)
+        .order("responded_at", { ascending: false })
+        .limit(500);
+      setRespuestas(data || []);
+      setLoading(false);
+    })();
+  }, []);
+
+  const total = respuestas.length;
+  const promotores = respuestas.filter(r => r.categoria === "promotor").length;
+  const detractores = respuestas.filter(r => r.categoria === "detractor").length;
+  const nps = total > 0 ? Math.round(((promotores - detractores) / total) * 100) : null;
+
+  const scoreProm = total > 0 ? (respuestas.reduce((s, r) => s + (r.score || 0), 0) / total).toFixed(1) : null;
+
+  // Evolución mensual
+  const porMes = {};
+  respuestas.forEach(r => {
+    const mes = (r.responded_at || "").slice(0, 7);
+    if (!porMes[mes]) porMes[mes] = { total: 0, promotores: 0, detractores: 0 };
+    porMes[mes].total++;
+    if (r.categoria === "promotor") porMes[mes].promotores++;
+    if (r.categoria === "detractor") porMes[mes].detractores++;
+  });
+  const mesesOrdenados = Object.keys(porMes).sort().reverse().slice(0, 6).reverse();
+  const evolucion = mesesOrdenados.map(m => ({
+    mes: m,
+    ...porMes[m],
+    nps: porMes[m].total > 0 ? Math.round(((porMes[m].promotores - porMes[m].detractores) / porMes[m].total) * 100) : 0,
+  }));
+
+  const detractoresList = respuestas.filter(r => r.categoria === "detractor").slice(0, 10);
+
+  return (
+    <div style={{ background: "rgba(15, 25, 55, 0.4)", borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)", marginBottom: 20 }}>
+      <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#fff" }}>😊 Net Promoter Score (NPS)</h3>
+      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3, marginBottom: 16 }}>
+        Encuesta post-visita 24h después via WhatsApp. Score = %Promotores (9-10) − %Detractores (0-6).
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+        <div style={{ background: cardBgLite, borderRadius: 10, padding: 16 }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700 }}>NPS Global</div>
+          <div style={{ fontSize: 32, fontWeight: 900, color: nps === null ? "rgba(255,255,255,0.3)" : nps >= 50 ? "#10B981" : nps >= 0 ? "#F59E0B" : "#EF4444", marginTop: 4 }}>
+            {nps === null ? "—" : nps}
+          </div>
+        </div>
+        <div style={{ background: cardBgLite, borderRadius: 10, padding: 16 }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700 }}>Score Promedio</div>
+          <div style={{ fontSize: 32, fontWeight: 900, color: "#38BDF8", marginTop: 4 }}>{scoreProm || "—"}</div>
+        </div>
+        <div style={{ background: cardBgLite, borderRadius: 10, padding: 16 }}>
+          <div style={{ fontSize: 10, color: "#10B981", textTransform: "uppercase", fontWeight: 700 }}>Promotores</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "#10B981", marginTop: 4 }}>{promotores}</div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{total ? Math.round(promotores/total*100) : 0}%</div>
+        </div>
+        <div style={{ background: cardBgLite, borderRadius: 10, padding: 16 }}>
+          <div style={{ fontSize: 10, color: "#F59E0B", textTransform: "uppercase", fontWeight: 700 }}>Pasivos</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "#F59E0B", marginTop: 4 }}>{total - promotores - detractores}</div>
+        </div>
+        <div style={{ background: cardBgLite, borderRadius: 10, padding: 16 }}>
+          <div style={{ fontSize: 10, color: "#EF4444", textTransform: "uppercase", fontWeight: 700 }}>Detractores</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "#EF4444", marginTop: 4 }}>{detractores}</div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{total ? Math.round(detractores/total*100) : 0}%</div>
+        </div>
+        <div style={{ background: cardBgLite, borderRadius: 10, padding: 16 }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700 }}>Reviews Google</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "#4285F4", marginTop: 4 }}>
+            {respuestas.filter(r => r.google_review_click).length}
+          </div>
+        </div>
+      </div>
+
+      {loading && <div style={{ color: "rgba(255,255,255,0.5)", marginTop: 16 }}>Cargando…</div>}
+      {!loading && total === 0 && (
+        <div style={{ marginTop: 16, padding: 16, background: cardBgLite, borderRadius: 10, textAlign: "center", color: "rgba(255,255,255,0.5)", fontSize: 13 }}>
+          Aún no hay respuestas NPS. El sistema envía WA 24h después de cada visita digital (requiere plantilla aprobada Meta: <code>nps_post_visita_es</code>).
+        </div>
+      )}
+
+      {!loading && evolucion.length > 0 && (
+        <>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", marginTop: 24, marginBottom: 8, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>Evolución mensual</div>
+          <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
+            {evolucion.map(e => (
+              <div key={e.mes} style={{ background: cardBgLite, borderRadius: 10, padding: 12, minWidth: 100, flex: "0 0 auto", textAlign: "center" }}>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", fontWeight: 700 }}>{fmtMes(e.mes + "-01")}</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: e.nps >= 50 ? "#10B981" : e.nps >= 0 ? "#F59E0B" : "#EF4444", marginTop: 4 }}>{e.nps}</div>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{e.total} resp</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {!loading && detractoresList.length > 0 && (
+        <>
+          <div style={{ fontSize: 12, color: "#EF4444", marginTop: 24, marginBottom: 8, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>⚠ Detractores para acción</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 600 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+                  <th style={thAd}>Fecha</th>
+                  <th style={thAd}>Cliente</th>
+                  <th style={thAd}>Teléfono</th>
+                  <th style={{ ...thAd, textAlign: "center" }}>Score</th>
+                  <th style={thAd}>Comentario</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detractoresList.map(r => (
+                  <tr key={r.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                    <td style={tdAd}>{r.responded_at?.slice(0, 10)}</td>
+                    <td style={{ ...tdAd, color: "#fff", fontWeight: 600 }}>{r.cliente_nombre}</td>
+                    <td style={tdAd}>{r.telefono}</td>
+                    <td style={{ ...tdAd, textAlign: "center", color: "#EF4444", fontWeight: 800 }}>{r.score}</td>
+                    <td style={{ ...tdAd, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.comentario || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );

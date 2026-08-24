@@ -358,6 +358,7 @@ const Upsells = lazy(() => import("./modules/Upsells"));
 const Menus = lazy(() => import("./modules/Menus"));
 const CheckIn = lazy(() => import("./modules/CheckIn"));
 const ZarpeInfo = lazy(() => import("./modules/ZarpeInfo"));
+const NPSResponder = lazy(() => import("./modules/NPSResponder"));
 const ZarpeGrupo = lazy(() => import("./modules/ZarpeGrupo"));
 const Analitica = lazy(() => import("./modules/Analitica"));
 const MuelleCheckin = lazy(() => import("./modules/MuelleCheckin"));
@@ -505,7 +506,7 @@ const MODULE_MAP = {
 };
 
 // Public routes — no auth required
-const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info", "zarpe-grupo", "login", "las-americas", "resultados", "track", "dia-de-la-madre", "madres", "blueapple", "blueapple-pax", "juicy", "juicyandcream", "juicy-organizador", "juice-organizador", "cajas", "cajas-admin", "cajas-imprimir", "cajas-setup", ""];
+const PUBLIC_ROUTES = ["empleados", "agencia", "booking", "pago", "reset-password", "zarpe-info", "zarpe-grupo", "login", "las-americas", "resultados", "track", "dia-de-la-madre", "madres", "blueapple", "blueapple-pax", "juicy", "juicyandcream", "juicy-organizador", "juice-organizador", "cajas", "cajas-admin", "cajas-imprimir", "cajas-setup", "nps", ""];
 
 function getRoute() {
   return window.location.pathname.replace(/^\//, "") || "";
@@ -757,6 +758,7 @@ export default function App() {
   if (route.startsWith("pago"))   return <><PagoCliente /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "reset-password") return <><ResetPassword /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "zarpe-info")     return <><ZarpeInfo /><WhatsAppFloat phone={waPhone} /></>;
+  if (route === "nps")            return <NPSResponder />;
   if (route === "escanear-productos" || route === "escanear") return <EscanearProductos />;
   if (route === "zarpe-grupo")    return <><ZarpeGrupo /><WhatsAppFloat phone={waPhone} /></>;
   if (route === "dia-de-la-madre" || route === "madres") return <DiaDeLaMadre />;
