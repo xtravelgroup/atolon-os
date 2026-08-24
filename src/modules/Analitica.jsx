@@ -59,6 +59,9 @@ export default function Analitica({ externo = false }) {
   const [loadingJourney, setLoadingJourney] = useState(false);
   const [scrollStats, setScrollStats] = useState(null);
   const [exitIntents, setExitIntents] = useState(0);
+  // Fase 1 AtolonTrack: LTV real por cliente digital (v_ltv_cliente_digital)
+  const [ltvStats, setLtvStats] = useState(null); // KPIs agregados
+  const [ltvTop, setLtvTop] = useState([]);       // top 10 VIPs digitales
   const [loading, setLoading] = useState(true);
 
   const periodos = [
@@ -89,7 +92,7 @@ export default function Analitica({ externo = false }) {
     if (externo && desde < TRACK_MIN_EXTERNO) desde = TRACK_MIN_EXTERNO;
     const hasta = periodo === "custom" && customTo ? new Date(customTo + "T23:59:59").toISOString() : new Date().toISOString();
 
-    const [sesRes, embRes, evRes, resConvRes, atribRes, abandRes, ingresosRes, usuariosRes] = await Promise.all([
+    const [sesRes, embRes, evRes, resConvRes, atribRes, abandRes, ingresosRes, usuariosRes, ltvRes] = await Promise.all([
       supabase.from("track_sesiones").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_embudos").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_eventos").select("tipo, categoria, datos, ts, sesion_id").gte("ts", desde).lte("ts", hasta),
@@ -102,6 +105,10 @@ export default function Analitica({ externo = false }) {
       supabase.from("track_abandonment").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_ingresos").select("*").gte("created_at", desde).lte("created_at", hasta),
       supabase.from("track_usuarios").select("segmento, intent_score, value_score").not("segmento", "is", null).limit(500),
+      // LTV real por cliente digital — histórico completo (no filtrado por
+      // período: LTV = valor de vida, no del período). Se filtra por canal
+      // según el switch "origen" que use el usuario.
+      supabase.from("v_ltv_cliente_digital").select("nombre, email, telefono, canal_adquisicion, visitas, ltv, ticket_promedio, primera_visita, ultima_visita, segmento"),
     ]);
 
     const rawSes       = sesRes.data      || [];   // sin filtrar (panel comparativo de orígenes)
@@ -183,6 +190,34 @@ export default function Analitica({ externo = false }) {
     const sesXUsuario = usuariosUnicos ? (totalSesiones / usuariosUnicos).toFixed(1) : "1.0";
 
     setStats({ totalSesiones, usuariosUnicos, sesConv, tasaConv, ingresoTotal, ticketPromedio, durPromedio, sesXUsuario });
+
+    // ── Fase 1 AtolonTrack: LTV por cliente digital ─────────────────────────
+    // Se filtra la vista por el toggle "origen" actual. La vista ya limita a
+    // web + whatsapp; aquí re-filtramos si el usuario eligió solo uno.
+    const ltvAll = ltvRes.data || [];
+    const ltvFiltro = allowedOrig
+      ? ltvAll.filter(c => allowedOrig.has(c.canal_adquisicion))
+      : ltvAll;
+    if (ltvFiltro.length > 0) {
+      const totalCli   = ltvFiltro.length;
+      const ltvTotal   = ltvFiltro.reduce((s, c) => s + Number(c.ltv || 0), 0);
+      const ltvProm    = Math.round(ltvTotal / totalCli);
+      const conRetorno = ltvFiltro.filter(c => c.visitas >= 2).length;
+      const retencionPct = ((conRetorno / totalCli) * 100).toFixed(1);
+      const nCli = (s) => ltvFiltro.filter(c => c.segmento === s).length;
+      const vipsChampions = nCli("vip") + nCli("champion");
+      const webCli   = ltvFiltro.filter(c => c.canal_adquisicion === "web").length;
+      const waCli    = ltvFiltro.filter(c => c.canal_adquisicion === "whatsapp").length;
+      const webLtv   = ltvFiltro.filter(c => c.canal_adquisicion === "web").reduce((s, c) => s + Number(c.ltv || 0), 0);
+      const waLtv    = ltvFiltro.filter(c => c.canal_adquisicion === "whatsapp").reduce((s, c) => s + Number(c.ltv || 0), 0);
+      setLtvStats({ totalCli, ltvTotal, ltvProm, retencionPct, vipsChampions,
+        buckets: { nuevo: nCli("nuevo"), retorno: nCli("retorno"), vip: nCli("vip"), champion: nCli("champion") },
+        splitCanal: { webCli, waCli, webLtv, waLtv } });
+      setLtvTop([...ltvFiltro].sort((a, b) => Number(b.ltv) - Number(a.ltv)).slice(0, 10));
+    } else {
+      setLtvStats(null);
+      setLtvTop([]);
+    }
 
     // ── Calidad de Atribución (Paid Media) + filas para Meta CAPI / Google ────
     // Por cada venta pagada self-service: resolvemos click-id y fuente vía la
@@ -646,9 +681,9 @@ export default function Analitica({ externo = false }) {
       {/* Tracking & Pixels — config editable por la agencia */}
       <TrackingConfigPanel />
 
-      {/* KPIs */}
+      {/* KPIs — periodo actual */}
       {stats && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 16, marginBottom: 28 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 16, marginBottom: 16 }}>
           <KPI label="Usuarios Únicos" value={stats.usuariosUnicos.toLocaleString("es-CO")} sub={`${stats.totalSesiones} sesiones · ${stats.sesXUsuario} ses/usuario`} />
           <KPI label="Conversiones" value={stats.sesConv} sub={`${stats.ingresoTotal > 0 ? "Reservas pagadas" : "Reservas confirmadas"}`} color={B.success} />
           <KPI label="Tasa Conv. Web" value={`${stats.tasaConv}%`} sub="Visitantes widget → Venta web" color={stats.tasaConv >= 3 ? B.success : B.sand} />
@@ -656,6 +691,77 @@ export default function Analitica({ externo = false }) {
           <KPI label="Ticket Promedio" value={fmt(stats.ticketPromedio)} />
           <KPI label="Duración Promedio" value={`${Math.floor(stats.durPromedio / 60)}m ${stats.durPromedio % 60}s`} />
         </div>
+      )}
+
+      {/* KPIs — LTV real histórico por cliente digital (Fase 1 AtolonTrack) */}
+      {ltvStats && (
+        <>
+          <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.15em", fontWeight: 700, margin: "12px 0 6px" }}>
+            💎 Valor de vida del cliente digital · histórico completo
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 16, marginBottom: 28 }}>
+            <KPI label="Clientes Digitales" value={ltvStats.totalCli.toLocaleString("es-CO")} sub={`${ltvStats.splitCanal.webCli} Web · ${ltvStats.splitCanal.waCli} WhatsApp`} />
+            <KPI label="LTV Promedio" value={fmt(ltvStats.ltvProm)} sub="Ingreso vitalicio / cliente" color={B.sky} />
+            <KPI label="Retención" value={`${ltvStats.retencionPct}%`} sub="Clientes con 2+ reservas" color={ltvStats.retencionPct >= 15 ? B.success : B.sand} />
+            <KPI label="VIPs + Champions" value={ltvStats.vipsChampions} sub={`≥ 4 reservas · seed lookalike`} color={ltvStats.vipsChampions > 0 ? B.success : B.muted} />
+            <KPI label="Revenue Web" value={fmt(ltvStats.splitCanal.webLtv)} sub={`${ltvStats.splitCanal.webCli} clientes`} />
+            <KPI label="Revenue WhatsApp" value={fmt(ltvStats.splitCanal.waLtv)} sub={`${ltvStats.splitCanal.waCli} clientes`} />
+          </div>
+
+          {/* Top VIPs Digitales — semilla para exportar audiencia lookalike a Meta */}
+          {ltvTop.length > 0 && (
+            <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, border: "1px solid rgba(255,255,255,0.07)", marginBottom: 20 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#fff" }}>💎 Top 10 Clientes Digitales por LTV</h3>
+                  <div style={{ fontSize: 11, color: B.muted, marginTop: 3 }}>Base para lookalike Meta / retargeting personalizado. Datos históricos.</div>
+                </div>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 720 }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+                      <th style={{ textAlign: "left",  padding: "8px 10px", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>#</th>
+                      <th style={{ textAlign: "left",  padding: "8px 10px", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>Cliente</th>
+                      <th style={{ textAlign: "center",padding: "8px 10px", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>Canal</th>
+                      <th style={{ textAlign: "right", padding: "8px 10px", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>Visitas</th>
+                      <th style={{ textAlign: "right", padding: "8px 10px", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>LTV</th>
+                      <th style={{ textAlign: "right", padding: "8px 10px", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>Ticket prom</th>
+                      <th style={{ textAlign: "center",padding: "8px 10px", fontSize: 10, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700 }}>Segmento</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ltvTop.map((c, i) => {
+                      const badge = c.segmento === "champion" ? { bg: B.success + "33", fg: B.success, txt: "🏆 Champion" }
+                                  : c.segmento === "vip"      ? { bg: B.sky + "33",     fg: B.sky,     txt: "⭐ VIP" }
+                                  : c.segmento === "retorno"  ? { bg: B.sand + "33",    fg: B.sand,    txt: "🔁 Retorno" }
+                                  :                             { bg: "rgba(255,255,255,0.08)", fg: B.muted, txt: "Nuevo" };
+                      const nombreCap = (c.nombre || "—").replace(/\b\w/g, x => x.toUpperCase());
+                      return (
+                        <tr key={i} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                          <td style={{ padding: "9px 10px", color: B.muted, fontWeight: 700 }}>{i + 1}</td>
+                          <td style={{ padding: "9px 10px", color: "#fff", fontWeight: 600 }}>{nombreCap}</td>
+                          <td style={{ padding: "9px 10px", textAlign: "center", fontSize: 11, color: c.canal_adquisicion === "whatsapp" ? "#25D366" : B.sky, fontWeight: 700 }}>
+                            {c.canal_adquisicion === "whatsapp" ? "WA" : "WEB"}
+                          </td>
+                          <td style={{ padding: "9px 10px", textAlign: "right", color: "#fff", fontWeight: 700 }}>{c.visitas}</td>
+                          <td style={{ padding: "9px 10px", textAlign: "right", color: B.sky, fontWeight: 800 }}>{fmt(c.ltv)}</td>
+                          <td style={{ padding: "9px 10px", textAlign: "right", color: "rgba(255,255,255,0.7)" }}>{fmt(c.ticket_promedio)}</td>
+                          <td style={{ padding: "9px 10px", textAlign: "center" }}>
+                            <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 12, background: badge.bg, color: badge.fg, fontSize: 10, fontWeight: 700, letterSpacing: 0.5 }}>{badge.txt}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ fontSize: 10, color: B.muted, marginTop: 12, textAlign: "right" }}>
+                Segmentos: Nuevo (1 visita) · Retorno (2-3) · VIP (4-9) · Champion (10+) · fuente: v_ltv_cliente_digital
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
