@@ -876,14 +876,15 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
       // setFE(), pero el payload no los enviaba al UPDATE → se perdían al
       // guardar la edición. fePayload() extrae solo los campos fe_* válidos.
       ...fePayload(form),
-      // Pre-selección de menú por pasajero (opcional, se muestra en /zarpe-grupo)
+      // Pre-selección de menú por pasajero (opcional, se muestra en /zarpe-grupo).
+      // ⚠ Las listas se guardan SIEMPRE, aunque el toggle esté apagado — antes
+      // se reseteaban a [] cuando preseleccion_menu=false, así que abrir/guardar
+      // el evento por otra razón borraba las opciones (bug: Qubicaamf perdió
+      // Pescado frito entero / Pizza Pepperoni / Pie de limón / Brownie tras
+      // que 3 pax ya habían elegido). Ahora se preservan siempre.
       preseleccion_menu:   !!form.preseleccion_menu,
-      menu_platos_fuertes: !!form.preseleccion_menu
-        ? String(form.menu_platos_fuertes || "").split("\n").map(s => s.trim()).filter(Boolean)
-        : [],
-      menu_postres:        !!form.preseleccion_menu
-        ? String(form.menu_postres || "").split("\n").map(s => s.trim()).filter(Boolean)
-        : [],
+      menu_platos_fuertes: String(form.menu_platos_fuertes || "").split("\n").map(s => s.trim()).filter(Boolean),
+      menu_postres:        String(form.menu_postres || "").split("\n").map(s => s.trim()).filter(Boolean),
     };
     let savedId = evento?.id;
     let dbError = null;
