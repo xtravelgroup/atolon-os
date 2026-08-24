@@ -382,6 +382,7 @@ const Resultados = lazy(() => import("./modules/Resultados"));
 const ResultadosViewer = lazy(() => import("./modules/ResultadosViewer"));
 const TrackViewer = lazy(() => import("./modules/TrackViewer"));
 const Lancha = lazy(() => import("./modules/Lancha"));
+const EmbarcacionSolicitudes = lazy(() => import("./modules/EmbarcacionSolicitudes"));
 const CosteoProductos = lazy(() => import("./modules/CosteoProductos"));
 const DiaDeLaMadre = lazy(() => import("./modules/DiaDeLaMadre"));
 const Despedidas = lazy(() => import("./modules/Despedidas"));
@@ -460,6 +461,7 @@ const MODULE_MAP = {
   muelle:    <MuelleCheckin />,
   salidas_isla: <MuelleSalidas />,
   lancha:       <Lancha />,
+  embarcaciones: <EmbarcacionSolicitudes />,
   costeo_productos:   <CosteoProductos />,
   menus:     <Menus />,
   configuracion: <Configuracion />,
