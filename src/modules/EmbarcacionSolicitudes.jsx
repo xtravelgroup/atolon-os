@@ -241,7 +241,8 @@ function SolicitudCard({ row, onOpen }) {
         {row.carga_desc && <div>📦 {row.carga_desc}</div>}
         {row.embarcacion_nombre && <div>⛵ <strong style={{ color: "#fff" }}>{row.embarcacion_nombre}</strong>{row.capitan && ` · ${row.capitan}`}</div>}
         {row.proveedor_externo && !row.embarcacion_nombre && <div>🏢 {row.proveedor_externo}</div>}
-        {row.costo_real > 0 && <div>💰 <strong style={{ color: "#fff" }}>{COP(row.costo_real)}</strong></div>}
+        {row.costo_real > 0 && <div>💰 <strong style={{ color: "#fff" }}>{COP(row.costo_real)}</strong>{row.pago_id && <span style={{ marginLeft: 8, ...CHIP("#10B98133", "#10B981"), fontSize: 9 }}>✓ En Pagos</span>}</div>}
+        {row.estado === "completada" && !row.pago_id && <div style={{ color: "#F5C842", fontSize: 11, marginTop: 4 }}>⚠ Falta registrar cuenta de cobro</div>}
         {row.solicitante_nombre && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginTop: 6 }}>Solicitado por {row.solicitante_nombre}</div>}
       </div>
     </div>
@@ -420,6 +421,10 @@ function GestionModal({ row, embarcaciones, user, onClose, onSaved }) {
     costo_real: row.costo_real || "",
     cobrado_a: row.cobrado_a || "",
     notas_op: row.notas || "",
+    cuenta_cobro_numero: row.cuenta_cobro_numero || "",
+    cuenta_cobro_fecha: row.cuenta_cobro_fecha || new Date().toISOString().slice(0, 10),
+    cuenta_cobro_vencimiento: row.cuenta_cobro_vencimiento || "",
+    factura_url: row.factura_url || "",
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
@@ -480,11 +485,77 @@ function GestionModal({ row, embarcaciones, user, onClose, onSaved }) {
     await actualizar({ estado: "solicitada", cancelada_at: null, completada_at: null, motivo_cancelacion: null }, "reabrir");
   }
 
+  async function eliminar() {
+    if (!confirm(`¿Eliminar definitivamente la solicitud ${row.codigo}? Esta acción no se puede deshacer.`)) return;
+    if (row.pago_id) {
+      if (!confirm("⚠ Esta solicitud tiene una cuenta de cobro registrada en Pagos. Al eliminar la solicitud NO se borra el pago (queda huérfano). ¿Continuar?")) return;
+    }
+    setSaving(true); setErr(null);
+    const { error } = await supabase.from("embarcacion_solicitudes").delete().eq("id", row.id);
+    if (error) { setErr(error.message); setSaving(false); return; }
+    logAccion({ modulo: "embarcaciones", accion: "eliminar", tabla: "embarcacion_solicitudes", registroId: row.id, datosAntes: { codigo: row.codigo } });
+    setSaving(false);
+    onSaved();
+  }
+
+  async function registrarCuentaCobro() {
+    if (!form.cuenta_cobro_numero.trim()) return setErr("Número de cuenta de cobro obligatorio");
+    if (!form.cuenta_cobro_fecha) return setErr("Fecha de emisión obligatoria");
+    if (!row.costo_real || row.costo_real <= 0) return setErr("La solicitud no tiene costo real registrado");
+    setSaving(true); setErr(null);
+    try {
+      const pagoId = `PO_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const proveedor = row.proveedor_externo || (row.embarcacion_nombre ? `${row.embarcacion_nombre} (flota)` : "—");
+      const conceptoTipo = tp.label;
+      const pagoPayload = {
+        id: pagoId,
+        fecha: form.cuenta_cobro_fecha,
+        fecha_vencimiento: form.cuenta_cobro_vencimiento || null,
+        concepto: `Servicio embarcación · ${conceptoTipo} · ${row.codigo}${row.ruta ? " · " + row.ruta : ""}`,
+        categoria: "transporte-embarcacion",
+        proveedor,
+        monto: Number(row.costo_real),
+        moneda: "COP",
+        referencia: form.cuenta_cobro_numero.trim(),
+        comprobante_url: form.factura_url || null,
+        pagado: false,
+        notas: `Solicitud ${row.codigo} · ${row.fecha_servicio}${row.pax ? " · " + row.pax + " pax" : ""}${row.cliente_nombre ? " · " + row.cliente_nombre : ""}`,
+        created_by: user?.email || null,
+      };
+      const { error: pagoErr } = await supabase.from("pagos_otros").insert(pagoPayload);
+      if (pagoErr) throw pagoErr;
+
+      const { error: updErr } = await supabase.from("embarcacion_solicitudes").update({
+        cuenta_cobro_numero: form.cuenta_cobro_numero.trim(),
+        cuenta_cobro_fecha: form.cuenta_cobro_fecha,
+        cuenta_cobro_vencimiento: form.cuenta_cobro_vencimiento || null,
+        factura_url: form.factura_url || null,
+        pago_id: pagoId,
+        registrada_pago_at: new Date().toISOString(),
+      }).eq("id", row.id);
+      if (updErr) throw updErr;
+
+      logAccion({ modulo: "embarcaciones", accion: "registrar_cuenta_cobro", tabla: "embarcacion_solicitudes", registroId: row.id,
+        datosDespues: { pago_id: pagoId, monto: row.costo_real, cuenta_cobro_numero: form.cuenta_cobro_numero } });
+      logAccion({ modulo: "pagos", accion: "crear_gasto", tabla: "pagos_otros", registroId: pagoId,
+        datosDespues: { concepto: pagoPayload.concepto, monto: pagoPayload.monto, proveedor },
+        notas: `Auto-generado desde solicitud embarcación ${row.codigo}` });
+
+      setSaving(false);
+      onSaved();
+    } catch (e) {
+      setErr(e.message || String(e));
+      setSaving(false);
+    }
+  }
+
   const puedeAsignar   = row.estado === "solicitada";
   const puedeIniciar   = row.estado === "asignada";
   const puedeCompletar = ["asignada", "en_curso"].includes(row.estado);
   const puedeCancelar  = !["completada", "cancelada"].includes(row.estado);
   const puedeReabrir   = ["completada", "cancelada"].includes(row.estado);
+  const puedeCuentaCobro = row.estado === "completada" && !row.pago_id;
+  const tieneCuentaCobro = !!row.pago_id;
 
   return (
     <div onClick={onClose} style={modalBg}>
@@ -575,10 +646,65 @@ function GestionModal({ row, embarcaciones, user, onClose, onSaved }) {
             </div>
           )}
 
+          {/* Cuenta de cobro — visible cuando está completada */}
+          {(puedeCuentaCobro || tieneCuentaCobro) && (
+            <div style={{ marginTop: 20, padding: 14, background: tieneCuentaCobro ? "#10B98122" : "rgba(245,200,66,0.08)", borderRadius: 10, border: `1px solid ${tieneCuentaCobro ? "#10B98155" : "rgba(245,200,66,0.3)"}` }}>
+              <div style={{ fontSize: 11, color: tieneCuentaCobro ? "#10B981" : B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 10 }}>
+                {tieneCuentaCobro ? "✓ Cuenta de Cobro Registrada" : "💳 Registrar Cuenta de Cobro"}
+              </div>
+              {tieneCuentaCobro ? (
+                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.85)", lineHeight: 1.7 }}>
+                  <div>N°: <strong style={{ color: "#fff" }}>{row.cuenta_cobro_numero}</strong></div>
+                  <div>Emitida: <strong style={{ color: "#fff" }}>{row.cuenta_cobro_fecha}</strong>{row.cuenta_cobro_vencimiento && ` · vence ${row.cuenta_cobro_vencimiento}`}</div>
+                  <div>Monto: <strong style={{ color: "#10B981" }}>{COP(row.costo_real)}</strong></div>
+                  {row.factura_url && <div>📎 <a href={row.factura_url} target="_blank" rel="noopener" style={{ color: "#38BDF8" }}>Ver factura</a></div>}
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 6 }}>
+                    Registrada en Pagos como <strong>Por Pagar</strong> · ref {row.pago_id}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div style={grid2(isMobile)}>
+                    <div>
+                      <label style={LS}>N° cuenta de cobro / factura *</label>
+                      <input style={IS} value={form.cuenta_cobro_numero} onChange={e => set("cuenta_cobro_numero", e.target.value)} placeholder="Ej: FE-1234" />
+                    </div>
+                    <div>
+                      <label style={LS}>Fecha emisión *</label>
+                      <input type="date" style={IS} value={form.cuenta_cobro_fecha} onChange={e => set("cuenta_cobro_fecha", e.target.value)} />
+                    </div>
+                  </div>
+                  <div style={grid2(isMobile)}>
+                    <div>
+                      <label style={LS}>Fecha vencimiento</label>
+                      <input type="date" style={IS} value={form.cuenta_cobro_vencimiento} onChange={e => set("cuenta_cobro_vencimiento", e.target.value)} />
+                    </div>
+                    <div>
+                      <label style={LS}>URL factura (Drive, etc.)</label>
+                      <input style={IS} value={form.factura_url} onChange={e => set("factura_url", e.target.value)} placeholder="https://..." />
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 4 }}>
+                    💡 Monto: <strong style={{ color: "#fff" }}>{COP(row.costo_real)}</strong> · proveedor: <strong>{row.proveedor_externo || row.embarcacion_nombre || "—"}</strong>
+                    <br />Al registrar aparecerá en <strong>Pagos → Por Pagar</strong>.
+                  </div>
+                  <button onClick={registrarCuentaCobro} disabled={saving}
+                    style={{ ...BTN("#F5C842", "#0a1628"), marginTop: 12, opacity: saving ? 0.6 : 1 }}>
+                    {saving ? "Registrando…" : "💳 Registrar cuenta de cobro"}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
           {err && <div style={{ color: "#EF4444", fontSize: 13, marginTop: 12 }}>{err}</div>}
         </div>
 
         <div style={{ ...modalFoot, flexWrap: "wrap" }}>
+          <button onClick={eliminar} disabled={saving} title="Eliminar definitivamente"
+            style={{ ...BTN("transparent", "#EF4444"), border: `1px solid ${"#EF444455"}`, opacity: saving ? 0.6 : 1 }}>
+            🗑 Eliminar
+          </button>
           {puedeReabrir && <button onClick={reabrir} style={BTN("rgba(255,255,255,0.08)")}>↻ Reabrir</button>}
           {puedeCancelar && <button onClick={cancelar} style={BTN("#EF444433", "#EF4444")}>✗ Cancelar</button>}
           <div style={{ flex: 1 }} />
