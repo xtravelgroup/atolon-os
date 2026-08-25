@@ -35,3 +35,8 @@ print-agent/node_modules/
 loggro_*.csv
 loggro_*.xlsx
 loggro_*.json
+
+
+# Claude Code worktrees (embedded git repos)
+.claude/worktrees/
+src/.claude/worktrees/
