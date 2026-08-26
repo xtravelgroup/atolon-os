@@ -514,11 +514,18 @@ export function EventoModal({ evento, categoria, salidas, aliados, vendedores, o
     supabase.from("eventos").select("*").eq("id", evento.id).single()
       .then(({ data }) => {
         if (!data) return;
-        setForm(f => ({ ...f, ...data,
+        // ⚠ IMPORTANTE: excluir del spread los campos que el usuario puede
+        // estar editando activamente. Este fetch es async (~100-300ms) y si
+        // el usuario ya activó el toggle "preselección de menú" o escribió
+        // en los textareas ANTES de que resuelva la query, {...data} los
+        // pisa con los valores stale de BD (que suelen ser false/vacíos por
+        // el bug histórico que borraba las listas al guardar). El propósito
+        // original de este refresh era garantizar fe_* frescos — solo eso
+        // debe sobrescribir, no la config de menú.
+        const { preseleccion_menu, menu_platos_fuertes, menu_postres, ...rest } = data;
+        setForm(f => ({ ...f, ...rest,
           pax: String(data.pax || ""),
           valor: String(data.valor || ""),
-          menu_platos_fuertes: Array.isArray(data.menu_platos_fuertes) ? data.menu_platos_fuertes.join("\n") : (data.menu_platos_fuertes || ""),
-          menu_postres: Array.isArray(data.menu_postres) ? data.menu_postres.join("\n") : (data.menu_postres || ""),
         }));
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
