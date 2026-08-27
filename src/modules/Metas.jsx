@@ -114,9 +114,43 @@ function DrillDownModal({ title, items, cols, onClose }) {
     fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
   };
 
+  // Sort por columna al click en el header
+  const [sortKey, setSortKey] = useState(null);
+  const [sortDir, setSortDir] = useState("desc"); // "asc" | "desc"
+  const sortedItems = (() => {
+    if (!sortKey) return items;
+    const col = cols.find(c => c.key === sortKey);
+    if (!col) return items;
+    const getVal = (row) => {
+      if (typeof col.sortValue === "function") return col.sortValue(row);
+      if (col.render) {
+        const r = col.render(row);
+        if (typeof r === "string") {
+          const num = Number(r.replace(/[^\d.-]/g, ""));
+          return Number.isFinite(num) && r.match(/\d/) ? num : String(r).toLowerCase();
+        }
+        if (typeof r === "number") return r;
+      }
+      return row[col.key];
+    };
+    return [...items].sort((a, b) => {
+      const va = getVal(a), vb = getVal(b);
+      if (va == null && vb == null) return 0;
+      if (va == null) return sortDir === "asc" ? -1 : 1;
+      if (vb == null) return sortDir === "asc" ? 1 : -1;
+      if (typeof va === "number" && typeof vb === "number") return sortDir === "asc" ? va - vb : vb - va;
+      const cmp = String(va).localeCompare(String(vb), "es", { numeric: true, sensitivity: "base" });
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  })();
+  const toggleSort = (key) => {
+    if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortKey(key); setSortDir("desc"); }
+  };
+
   const handlePrint = () => {
     const header = cols.map(c => `<th style="text-align:${c.right?"right":"left"};padding:6px 10px;border-bottom:1px solid #ccc;font-size:11px;text-transform:uppercase">${c.label}</th>`).join("");
-    const bodyRows = items.map(row => {
+    const bodyRows = sortedItems.map(row => {
       const cells = cols.map(c => {
         const val = c.render ? c.render(row) : (row[c.key] ?? "—");
         return `<td style="padding:6px 10px;font-size:13px;text-align:${c.right?"right":"left"};border-bottom:1px solid #eee">${val}</td>`;
@@ -153,15 +187,20 @@ function DrillDownModal({ title, items, cols, onClose }) {
             <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 12 }}>
               <thead>
                 <tr>
-                  {cols.map(c => (
-                    <th key={c.key} style={{ textAlign: c.right ? "right" : "left", padding: "8px 10px", fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: "0.07em", borderBottom: `1px solid ${B.navyLight}`, fontWeight: 600 }}>
-                      {c.label}
-                    </th>
-                  ))}
+                  {cols.map(c => {
+                    const isSorted = sortKey === c.key;
+                    return (
+                      <th key={c.key} onClick={() => toggleSort(c.key)}
+                        style={{ textAlign: c.right ? "right" : "left", padding: "8px 10px", fontSize: 11, color: isSorted ? B.sky : B.sand, textTransform: "uppercase", letterSpacing: "0.07em", borderBottom: `1px solid ${isSorted ? B.sky : B.navyLight}`, fontWeight: 700, cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}
+                        title="Click para ordenar">
+                        {c.label} <span style={{ opacity: isSorted ? 1 : 0.3, marginLeft: 4 }}>{isSorted ? (sortDir === "asc" ? "▲" : "▼") : "⇅"}</span>
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
-                {items.map((row, i) => (
+                {sortedItems.map((row, i) => (
                   <tr key={i} style={{ borderBottom: `1px solid ${B.navyLight}44` }}>
                     {cols.map(c => (
                       <td key={c.key} style={{ padding: "10px 10px", fontSize: 13, textAlign: c.right ? "right" : "left", color: c.color ? c.color(row) : B.white }}>
