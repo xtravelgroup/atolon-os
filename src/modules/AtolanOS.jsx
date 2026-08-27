@@ -46,7 +46,12 @@ function KpiCard({ label, value, sub, color }) {
 // Widget que carga y muestra aprobaciones pendientes en cualquier módulo,
 // filtrado por el rol/permiso del usuario logueado. Click en cada fila
 // navega al módulo destino.
-function PorAprobarWidget({ userEmail, userRolId, onNavigate }) {
+function PorAprobarWidget({ userEmail, userRolId, userModulos, onNavigate }) {
+  // Si userModulos es null/vacío → super admin (ve todo). Si es array → filtra.
+  const canSee = (moduleKey) => {
+    if (!userModulos || userModulos.length === 0) return true;
+    return userModulos.includes(moduleKey);
+  };
   const [items, setItems] = useState([]);       // [{key, icon, label, count, module, color}]
   const [loading, setLoading] = useState(true);
 
@@ -117,20 +122,21 @@ function PorAprobarWidget({ userEmail, userRolId, onNavigate }) {
       const rows = [
         { key: "req",    label: "Requisiciones de compra",    icon: "📝",  color: B.warning, count: reqR,   module: "requisiciones" },
         { key: "nomq",   label: "Nómina quincenal por aprobar", icon: "💵",  color: "#F59E0B", count: nomQR,  module: "procesar_nomina" },
-        { key: "nomd",   label: "Turnos extra por aprobar",     icon: "⏱",  color: "#F59E0B", count: nomDR,  module: "nomina_por_dia" },
+        { key: "nomd",   label: "Turnos extra por aprobar",     icon: "⏱",  color: "#F59E0B", count: nomDR,  module: "nomina_dia" },
         { key: "comp",   label: "Comprobantes por validar",     icon: "🧾",  color: B.sky,     count: compR,  module: "cxc" },
         { key: "reemb",  label: "Reembolsos B2B",               icon: "↩",   color: "#EC4899", count: reembR, module: "b2b" },
         { key: "antic",  label: "Anticipos de OC",              icon: "🏦",  color: "#38BDF8", count: anticR, module: "compras" },
         { key: "contr",  label: "Contratistas en revisión",     icon: "🦺",  color: "#F59E0B", count: contrR, module: "contratistas_admin" },
         { key: "emb",    label: "Servicios de embarcación",     icon: "⛵",  color: "#38BDF8", count: embR,   module: "embarcaciones" },
         { key: "mant",   label: "Órdenes de mantenimiento",     icon: "🔧",  color: "#A855F7", count: mantR,  module: "mantenimiento" },
-      ].filter(r => r.count > 0);
+      ].filter(r => r.count > 0 && canSee(r.module));
 
       setItems(rows);
       setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [userEmail, userRolId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userEmail, userRolId, JSON.stringify(userModulos)]);
 
   const total = items.reduce((s, r) => s + r.count, 0);
 
@@ -194,7 +200,7 @@ function PorAprobarWidget({ userEmail, userRolId, onNavigate }) {
   );
 }
 
-function Dashboard({ userEmail, userRolId, onNavigate }) {
+function Dashboard({ userEmail, userRolId, userModulos, onNavigate }) {
   const [kpis, setKpis] = useState({});
   const [loading, setLoading] = useState(true);
   // Bug 2026-05: si la pestaña quedaba abierta cruzando medianoche, el
@@ -380,7 +386,7 @@ function Dashboard({ userEmail, userRolId, onNavigate }) {
       </div>
 
       {/* Widget: Por Aprobar — pendientes en cualquier módulo, filtrado por rol/permiso */}
-      <PorAprobarWidget userEmail={userEmail} userRolId={userRolId} onNavigate={onNavigate} />
+      <PorAprobarWidget userEmail={userEmail} userRolId={userRolId} userModulos={userModulos} onNavigate={onNavigate} />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <div style={{ background: B.navyMid, borderRadius: 12, padding: 24 }}>
@@ -942,7 +948,7 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
               <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)" }}>No tienes permiso para acceder a este módulo.</div>
             </div>
           ) : (
-            moduleContent || <Dashboard userEmail={userEmail} userRolId={userRolId} onNavigate={onNavigate} />
+            moduleContent || <Dashboard userEmail={userEmail} userRolId={userRolId} userModulos={userModulos} onNavigate={onNavigate} />
           )}
         </div>
       </div>
