@@ -134,17 +134,20 @@ function TabDashboard({ ordenes, otros, recurrentes, nominas, comisiones = [], s
   // Facturas con factura aplicada y no pagada completa
   const facturas = ordenes.filter(o => o.factura_aplicada && !o.pagada_completa && ocActiva(o))
     .map(o => ({ ...o, _saldo: Number(o.total || 0) - Number(o.monto_pagado || 0) }));
-  // Otros gastos pendientes
-  const gastosPend = otros.filter(o => !o.pagado);
+  // Otros gastos pendientes (excluye embarcaciones, que van en su propio KPI)
+  const gastosPend = otros.filter(o => !o.pagado && o.categoria !== "transporte-embarcacion");
+  // Embarcaciones pendientes (categoria transporte-embarcacion)
+  const embarcPend = otros.filter(o => !o.pagado && o.categoria === "transporte-embarcacion");
   // Comisiones aprobadas (listas para pagar)
   const comisionesPend = (comisiones || []).filter(c => c.estado === "aprobado");
 
   const totalAnticipos = anticipos.reduce((s, o) => s + Number(o.anticipo_monto || 0), 0);
   const totalFacturas  = facturas.reduce((s, o) => s + (Number(o.total || 0) - Number(o.monto_pagado || 0)), 0);
   const totalGastos    = gastosPend.reduce((s, o) => s + Number(o.monto || 0), 0);
+  const totalEmbarc    = embarcPend.reduce((s, o) => s + Number(o.monto || 0), 0);
   const totalComisiones = comisionesPend.reduce((s, c) => s + Number(c.monto_comision || 0), 0);
   const totalRecurrentes = recurrentes.filter(r => r.activo).reduce((s, r) => s + Number(r.monto || 0), 0);
-  const totalPendiente = totalAnticipos + totalFacturas + totalGastos + totalComisiones;
+  const totalPendiente = totalAnticipos + totalFacturas + totalGastos + totalEmbarc + totalComisiones;
 
   // Vencen en 7 días
   const vencen7 = [
@@ -162,10 +165,11 @@ function TabDashboard({ ordenes, otros, recurrentes, nominas, comisiones = [], s
   const totalVencido = vencidos.reduce((s, o) => s + Number(o._saldo || o.monto || 0), 0);
 
   const KPIs = [
-    { label: "Total por pagar",    value: COP(totalPendiente),  sub: `${anticipos.length + facturas.length + gastosPend.length + comisionesPend.length} pendientes`, color: B.sand,    tab: "porpagar" },
+    { label: "Total por pagar",    value: COP(totalPendiente),  sub: `${anticipos.length + facturas.length + gastosPend.length + embarcPend.length + comisionesPend.length} pendientes`, color: B.sand,    tab: "porpagar" },
     { label: "Vencidos",            value: COP(totalVencido),    sub: `${vencidos.length} factura${vencidos.length !== 1 ? "s" : ""}`,         color: B.danger,  tab: "porpagar" },
     { label: "Vencen en 7 días",    value: COP(vencen7.reduce((s, x) => s + Number(x.monto || 0), 0)), sub: `${vencen7.length} pagos`,         color: B.warning, tab: "calendario" },
     { label: "Anticipos pendientes",value: COP(totalAnticipos),  sub: `${anticipos.length} OCs`,                                                color: B.sky,     tab: "porpagar" },
+    { label: "Embarcaciones",       value: COP(totalEmbarc),     sub: `${embarcPend.length} servicio${embarcPend.length !== 1 ? "s" : ""}`,     color: "#38BDF8", tab: "porpagar" },
     { label: "Comisiones por pagar",value: COP(totalComisiones), sub: `${comisionesPend.length} aprobada${comisionesPend.length !== 1 ? "s" : ""}`, color: "#22d3ee", tab: "porpagar" },
     { label: "Recurrentes activos", value: COP(totalRecurrentes),sub: `${recurrentes.filter(r => r.activo).length} pagos/mes`,                  color: "#a78bfa", tab: "recurrentes" },
   ];
@@ -250,14 +254,20 @@ function TabPorPagar({ ordenes, otros, comisiones = [], nominasDia = [], reload,
         oc: o, accion: "marcar_factura",
       });
     });
-    // Gastos
-    otros.filter(o => !o.pagado).forEach(o => list.push({
-      tipo: "gasto", icon: "💸", color: "#a78bfa",
-      ref: o.concepto, proveedor: o.proveedor || "—",
-      monto: Number(o.monto || 0),
-      vence: o.fecha_vencimiento,
-      gasto: o, accion: "marcar_gasto",
-    }));
+    // Gastos + Embarcaciones (misma tabla pagos_otros, se distinguen por categoria)
+    otros.filter(o => !o.pagado).forEach(o => {
+      const esEmbarcacion = o.categoria === "transporte-embarcacion";
+      list.push({
+        tipo: esEmbarcacion ? "embarcacion" : "gasto",
+        icon: esEmbarcacion ? "⛵" : "💸",
+        color: esEmbarcacion ? "#38BDF8" : "#a78bfa",
+        ref: o.concepto, proveedor: o.proveedor || "—",
+        monto: Number(o.monto || 0),
+        vence: o.fecha_vencimiento,
+        factura_url: o.comprobante_url || null,
+        gasto: o, accion: "marcar_gasto",
+      });
+    });
     // Comisiones aprobadas (listas para pagar)
     (comisiones || []).filter(c => c.estado === "aprobado").forEach(c => list.push({
       tipo: "comision", icon: "🤝", color: "#22d3ee",
@@ -286,6 +296,7 @@ function TabPorPagar({ ordenes, otros, comisiones = [], nominasDia = [], reload,
     if (filtro === "anticipos")  return x.tipo === "anticipo";
     if (filtro === "facturas")   return x.tipo === "factura";
     if (filtro === "gastos")     return x.tipo === "gasto";
+    if (filtro === "embarcaciones") return x.tipo === "embarcacion";
     if (filtro === "comisiones") return x.tipo === "comision";
     if (filtro === "nomina_dia") return x.tipo === "nomina_dia";
     if (filtro === "vencidos")  return x.vence && x.vence < today;
@@ -313,6 +324,7 @@ function TabPorPagar({ ordenes, otros, comisiones = [], nominasDia = [], reload,
           ["anticipos",  `🏦 Anticipos`],
           ["facturas",   `📄 Facturas`],
           ["gastos",     `💸 Gastos`],
+          ["embarcaciones", `⛵ Embarcaciones`],
           ["comisiones", `🤝 Comisiones`],
           ["nomina_dia", `👷 Nómina día`],
         ].map(([k, l]) => (
