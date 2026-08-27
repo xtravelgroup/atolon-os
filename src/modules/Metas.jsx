@@ -334,7 +334,7 @@ function TabResumen({ reals, metas, rawReservas, rawEventos, isMobile }) {
 // Tab: Por Vendedor
 // ─────────────────────────────────────────────────────────────────────────────
 
-function VendedorRankingSection({ depto, ranking }) {
+function VendedorRankingSection({ depto, ranking, onDrillVendedor }) {
   const MEDAL = ["🥇","🥈","🥉"];
   const MEDAL_COLOR = ["#FFD700","#C0C0C0","#CD7F32"];
 
@@ -369,7 +369,17 @@ function VendedorRankingSection({ depto, ranking }) {
                   {i < 3 ? MEDAL[i] : i + 1}
                 </div>
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 700 }}>{v.nombre}</div>
+                  {onDrillVendedor ? (
+                    <button onClick={() => onDrillVendedor(v.nombre)}
+                      style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer",
+                               fontSize: 14, fontWeight: 700, color: B.sky, textAlign: "left",
+                               textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}
+                      title="Ver detalle de las reservas de este vendedor">
+                      {v.nombre}
+                    </button>
+                  ) : (
+                    <div style={{ fontSize: 14, fontWeight: 700 }}>{v.nombre}</div>
+                  )}
                 </div>
               </div>
               <div style={{ display: "flex", gap: 20 }}>
@@ -412,9 +422,45 @@ function VendedorRankingSection({ depto, ranking }) {
   );
 }
 
-function TabVendedores({ rankings }) {
+function TabVendedores({ rankings, rawReservas = [], rawEventos = [] }) {
   const [activeDepto, setActiveDepto] = useState("pasadias");
+  const [drill, setDrill] = useState(null); // { title, items, cols }
   const depto = DEPTOS.find(d => d.key === activeDepto);
+
+  // Columnas idénticas a las de TabResumen para mantener consistencia
+  const RES_COLS = [
+    { key: "nombre",   label: "Nombre" },
+    { key: "fecha",    label: "Fecha" },
+    { key: "tipo",     label: "Tipo" },
+    { key: "canal",    label: "Canal", render: r => r.canal || "—" },
+    { key: "pax",      label: "Pax", right: true, render: r => (r.pax_a || 0) + (r.pax_n || 0) },
+    { key: "total",    label: "Total", right: true, render: r => COP_FMT(r.total), color: () => B.success },
+  ];
+  const EVT_COLS = [
+    { key: "nombre",    label: "Nombre / Grupo" },
+    { key: "categoria", label: "Tipo", render: r => r.categoria === "grupo" ? "👥 Grupo" : "🎉 Evento" },
+    { key: "fecha",     label: "Fecha" },
+    { key: "pax",       label: "Pax", right: true },
+    { key: "valor",     label: "Valor cotizado", right: true,
+      render: r => COP_FMT((r.valor || 0) + (r.valor_extras || 0)), color: () => B.success },
+  ];
+
+  const drillVendedor = (vendedorNombre) => {
+    const esPasadias = activeDepto === "pasadias";
+    const source = esPasadias
+      ? rawReservas.filter(r => (r.canal || "").toLowerCase() !== "grupo" && (r.vendedor || "Sin asignar") === vendedorNombre)
+      : rawEventos.filter(e => (e.vendedor || "Sin asignar") === vendedorNombre);
+    const sorted = esPasadias
+      ? [...source].sort((a, b) => (b.total || 0) - (a.total || 0))
+      : [...source].sort((a, b) => ((b.valor || 0) + (b.valor_extras || 0)) - ((a.valor || 0) + (a.valor_extras || 0)));
+    const cols = esPasadias ? RES_COLS : EVT_COLS;
+    setDrill({
+      title: `${depto.icon} ${vendedorNombre} — ${depto.label} · ${source.length} registro${source.length !== 1 ? "s" : ""}`,
+      items: sorted,
+      cols,
+    });
+  };
+
   return (
     <div>
       {/* Dept tabs */}
@@ -430,7 +476,10 @@ function TabVendedores({ rankings }) {
           </button>
         ))}
       </div>
-      <VendedorRankingSection depto={depto} ranking={rankings[activeDepto] || []} />
+      <VendedorRankingSection depto={depto} ranking={rankings[activeDepto] || []} onDrillVendedor={drillVendedor} />
+      {drill && (
+        <DrillDownModal title={drill.title} items={drill.items} cols={drill.cols} onClose={() => setDrill(null)} />
+      )}
     </div>
   );
 }
@@ -891,7 +940,7 @@ export default function Metas() {
       ) : tab === "resumen" ? (
         <TabResumen reals={reals} metas={metasSummary} rawReservas={rawReservas} rawEventos={rawEventos} isMobile={isMobile} />
       ) : tab === "vendedores" ? (
-        <TabVendedores rankings={rankings} />
+        <TabVendedores rankings={rankings} rawReservas={rawReservas} rawEventos={rawEventos} />
       ) : (
         <TabConfig
           vendedores={vendedores}
