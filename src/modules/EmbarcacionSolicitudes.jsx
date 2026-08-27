@@ -470,7 +470,19 @@ function GestionModal({ row, embarcaciones, user, onClose, onSaved, onEditarEmba
         .upload(path, file, { upsert: true, contentType: file.type });
       if (upErr) throw upErr;
       const { data: pub } = supabase.storage.from("embarcacion-docs").getPublicUrl(path);
-      set("factura_url", pub?.publicUrl || "");
+      const url = pub?.publicUrl || "";
+      set("factura_url", url);
+      // Si la cuenta de cobro ya está registrada, persistir de una en la
+      // solicitud Y en el pago_otros vinculado (así se ve el adjunto en
+      // Pagos → Por Pagar sin depender de un save).
+      if (row.pago_id) {
+        await supabase.from("embarcacion_solicitudes").update({ factura_url: url }).eq("id", row.id);
+        await supabase.from("pagos_otros").update({ comprobante_url: url }).eq("id", row.pago_id);
+        logAccion({ modulo: "embarcaciones", accion: "actualizar_factura_url",
+          tabla: "embarcacion_solicitudes", registroId: row.id,
+          datosDespues: { factura_url: url, pago_id: row.pago_id } });
+        onSaved();
+      }
     } catch (e) {
       setErr(e.message || String(e));
     } finally {
@@ -731,9 +743,23 @@ function GestionModal({ row, embarcaciones, user, onClose, onSaved, onEditarEmba
                   <div>N°: <strong style={{ color: "#fff" }}>{row.cuenta_cobro_numero}</strong></div>
                   <div>Emitida: <strong style={{ color: "#fff" }}>{row.cuenta_cobro_fecha}</strong>{row.cuenta_cobro_vencimiento && ` · vence ${row.cuenta_cobro_vencimiento}`}</div>
                   <div>Monto: <strong style={{ color: "#10B981" }}>{COP(row.costo_real)}</strong></div>
-                  {row.factura_url && <div>📎 <a href={row.factura_url} target="_blank" rel="noopener" style={{ color: "#38BDF8" }}>Ver factura</a></div>}
+                  {form.factura_url && <div>📎 <a href={form.factura_url} target="_blank" rel="noopener" style={{ color: "#38BDF8" }}>Ver factura</a></div>}
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 6 }}>
                     Registrada en Pagos como <strong>Por Pagar</strong> · ref {row.pago_id}
+                  </div>
+
+                  {/* Adjuntar / reemplazar factura después de registrada */}
+                  <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid rgba(255,255,255,0.1)` }}>
+                    <input type="file" accept="application/pdf,image/*" id={`fileFacturaRegistrada-${row.id}`}
+                      onChange={e => e.target.files?.[0] && subirFactura(e.target.files[0])}
+                      style={{ display: "none" }} />
+                    <label htmlFor={`fileFacturaRegistrada-${row.id}`}
+                      style={{ ...BTN("#38BDF8"), display: "inline-block", opacity: uploadingFactura ? 0.6 : 1, fontSize: 12, padding: "8px 14px", minHeight: "auto" }}>
+                      {uploadingFactura ? "Subiendo…" : (form.factura_url ? "🔄 Reemplazar factura" : "📤 Adjuntar factura")}
+                    </label>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 6 }}>
+                      Al subir se actualiza automáticamente en la solicitud y en Pagos → Por Pagar (ref {row.pago_id}).
+                    </div>
                   </div>
                 </div>
               ) : (
