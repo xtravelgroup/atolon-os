@@ -546,13 +546,23 @@ export default function Resultados() {
       const rows = resultados.find(r => r.cat === "grupos" && r.periodo === p.key)?.data || [];
       const resLinked = resultados.find(r => r.cat === "reservas_grupos" && r.periodo === p.key)?.data || [];
       const montoPorGrupo = (g) => {
-        const reservasDelGrupo = resLinked.filter(r => r.grupo_id === g.id);
+        // Filtrar wrappers de pago del organizador (id "GRP-ORG-*" o canal
+        // "GRUPO-ORG"): son parcialidades del mismo pago del organizador,
+        // no ventas separadas. Sin este filtro, en modalidad=organizador
+        // se duplicaba cotización + reservas GRP-ORG (Qubicaamf 27-ago:
+        // $22.26M cotización + $20.16M wrappers = $42.42M inflado).
+        const reservasDelGrupo = resLinked.filter(r =>
+          r.grupo_id === g.id &&
+          !String(r.id || "").startsWith("GRP-ORG-") &&
+          String(r.canal || "").toUpperCase() !== "GRUPO-ORG"
+        );
         const montoReservas = reservasDelGrupo
           .filter(r => !["no_show", "reembolsado", "cancelada"].includes(r.estado))
           .reduce((s, r) => s + (Number(r.total) || 0), 0);
         if (g.modalidad_pago === "organizador") {
-          // El organizador paga la cotización + cualquier reserva extra
-          // (raro que existan, pero si las hay, suman)
+          // Cotización del paquete (que ya cubre a todos los pasajeros del
+          // grupo) + reservas extras reales — no cuotas GRP-ORG del pago
+          // del organizador.
           return totalCotizacion(g) + montoReservas;
         }
         // individual: solo lo realmente cobrado a los huéspedes
