@@ -452,12 +452,31 @@ function GestionModal({ row, embarcaciones, user, onClose, onSaved, onEditarEmba
     factura_url: row.factura_url || "",
   });
   const [saving, setSaving] = useState(false);
+  const [uploadingFactura, setUploadingFactura] = useState(false);
   const [err, setErr] = useState(null);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const tp = tipoMeta(row.tipo_uso);
   const est = estadoMeta(row.estado);
   const embMap = new Map(embarcaciones.map(e => [e.id, e]));
+
+  async function subirFactura(file) {
+    if (!file) return;
+    setUploadingFactura(true); setErr(null);
+    try {
+      const ext = (file.name.split(".").pop() || "pdf").toLowerCase();
+      const path = `solicitudes/${row.id}/factura-${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("embarcacion-docs")
+        .upload(path, file, { upsert: true, contentType: file.type });
+      if (upErr) throw upErr;
+      const { data: pub } = supabase.storage.from("embarcacion-docs").getPublicUrl(path);
+      set("factura_url", pub?.publicUrl || "");
+    } catch (e) {
+      setErr(e.message || String(e));
+    } finally {
+      setUploadingFactura(false);
+    }
+  }
 
   async function actualizar(patch, accion) {
     setSaving(true); setErr(null);
@@ -735,8 +754,26 @@ function GestionModal({ row, embarcaciones, user, onClose, onSaved, onEditarEmba
                       <input type="date" style={IS} value={form.cuenta_cobro_vencimiento} onChange={e => set("cuenta_cobro_vencimiento", e.target.value)} />
                     </div>
                     <div>
-                      <label style={LS}>URL factura (Drive, etc.)</label>
+                      <label style={LS}>URL factura (opcional, si viene de Drive)</label>
                       <input style={IS} value={form.factura_url} onChange={e => set("factura_url", e.target.value)} placeholder="https://..." />
+                    </div>
+                  </div>
+
+                  {/* Adjuntar archivo — PDF o imagen */}
+                  <div style={{ marginTop: 8 }}>
+                    <label style={LS}>Adjuntar factura / cuenta de cobro (PDF o imagen)</label>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                      <input type="file" accept="application/pdf,image/*" id={`fileFactura-${row.id}`}
+                        onChange={e => e.target.files?.[0] && subirFactura(e.target.files[0])}
+                        style={{ display: "none" }} />
+                      <label htmlFor={`fileFactura-${row.id}`}
+                        style={{ ...BTN("#38BDF8"), display: "inline-block", opacity: uploadingFactura ? 0.6 : 1 }}>
+                        {uploadingFactura ? "Subiendo…" : (form.factura_url ? "🔄 Reemplazar archivo" : "📤 Subir archivo")}
+                      </label>
+                      {form.factura_url && (
+                        <a href={form.factura_url} target="_blank" rel="noopener"
+                           style={{ color: "#38BDF8", fontSize: 13 }}>👁 Ver adjunto</a>
+                      )}
                     </div>
                   </div>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 4 }}>
