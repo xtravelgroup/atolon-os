@@ -43,7 +43,158 @@ function KpiCard({ label, value, sub, color }) {
   );
 }
 
-function Dashboard() {
+// Widget que carga y muestra aprobaciones pendientes en cualquier módulo,
+// filtrado por el rol/permiso del usuario logueado. Click en cada fila
+// navega al módulo destino.
+function PorAprobarWidget({ userEmail, userRolId, onNavigate }) {
+  const [items, setItems] = useState([]);       // [{key, icon, label, count, module, color}]
+  const [loading, setLoading] = useState(true);
+
+  const ROLES_ADMIN_EXACTOS = ["super_admin", "admin", "administrador", "contabilidad", "direccion"];
+  const ROLES_ADMIN_PREFIJOS = ["gerente_general"];
+  const esRolAdmin = (r) => {
+    if (!r) return false;
+    if (ROLES_ADMIN_EXACTOS.includes(r)) return true;
+    return ROLES_ADMIN_PREFIJOS.some(p => r.startsWith(p));
+  };
+  const esGerente = (r) => r === "super_admin" || (r && r.startsWith("gerente_general"));
+
+  useEffect(() => {
+    if (!supabase) { setLoading(false); return; }
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const emailLc = (userEmail || "").toLowerCase();
+      const isAdmin = esRolAdmin(userRolId);
+      const isGerente = esGerente(userRolId);
+
+      // Departamentos que supervisa este usuario (para nómina quincenal)
+      const supDeptR = emailLc
+        ? await supabase.from("rh_departamentos").select("id, nombre, supervisor_email").ilike("supervisor_email", emailLc)
+        : { data: [] };
+      const misDeptos = (supDeptR.data || []).map(d => d.id);
+      const puedeVerNominaQuincenal = isAdmin || misDeptos.length > 0;
+
+      // Todas las queries de aprobación en paralelo
+      const queries = await Promise.all([
+        // 1) Requisiciones pendientes
+        supabase.from("requisiciones").select("id", { count: "exact", head: true }).eq("estado", "Pendiente"),
+        // 2) Nómina quincenal — filas de departamentos que faltan por aprobar
+        //    aproximación: contamos deptos activos SIN aprobación aún para el mes actual
+        puedeVerNominaQuincenal
+          ? supabase.from("nomina_aprobaciones").select("id", { count: "exact", head: true })
+              .eq("estado", "borrador")
+              .in("departamento_id", isAdmin ? [] : misDeptos.length ? misDeptos : ["__none__"])
+          : Promise.resolve({ count: 0 }),
+        // 3) Nómina por día — solicitado (solo admin aprueba)
+        isAdmin
+          ? supabase.from("nomina_por_dia").select("id", { count: "exact", head: true }).eq("estado", "solicitado")
+          : Promise.resolve({ count: 0 }),
+        // 4) Comprobantes reserva por validar
+        supabase.from("reservas").select("id", { count: "exact", head: true }).eq("estado", "pendiente_comprobante"),
+        // 5) Reembolsos B2B (solo gerente)
+        isGerente
+          ? supabase.from("reembolsos").select("id", { count: "exact", head: true }).eq("estado", "pendiente_aprobacion")
+          : Promise.resolve({ count: 0 }),
+        // 6) Anticipos OC pendientes
+        supabase.from("ordenes_compra").select("id", { count: "exact", head: true })
+          .eq("anticipo_requerido", true).eq("anticipo_pagado", false),
+        // 7) Contratistas en revisión
+        supabase.from("contratistas").select("id", { count: "exact", head: true })
+          .in("estado", ["radicado", "en_revision", "devuelto"]),
+        // 8) Solicitudes de embarcación sin asignar
+        supabase.from("embarcacion_solicitudes").select("id", { count: "exact", head: true }).eq("estado", "solicitada"),
+        // 9) Mantenimiento pendiente
+        supabase.from("mantenimiento_ordenes").select("id", { count: "exact", head: true }).eq("estado", "pendiente"),
+      ]);
+
+      if (cancelled) return;
+
+      const [
+        reqR, nomQR, nomDR, compR, reembR, anticR, contrR, embR, mantR,
+      ] = queries.map(r => Number(r?.count) || 0);
+
+      const rows = [
+        { key: "req",    label: "Requisiciones de compra",    icon: "📝",  color: B.warning, count: reqR,   module: "requisiciones" },
+        { key: "nomq",   label: "Nómina quincenal por aprobar", icon: "💵",  color: "#F59E0B", count: nomQR,  module: "procesar_nomina" },
+        { key: "nomd",   label: "Turnos extra por aprobar",     icon: "⏱",  color: "#F59E0B", count: nomDR,  module: "nomina_por_dia" },
+        { key: "comp",   label: "Comprobantes por validar",     icon: "🧾",  color: B.sky,     count: compR,  module: "cxc" },
+        { key: "reemb",  label: "Reembolsos B2B",               icon: "↩",   color: "#EC4899", count: reembR, module: "b2b" },
+        { key: "antic",  label: "Anticipos de OC",              icon: "🏦",  color: "#38BDF8", count: anticR, module: "compras" },
+        { key: "contr",  label: "Contratistas en revisión",     icon: "🦺",  color: "#F59E0B", count: contrR, module: "contratistas_admin" },
+        { key: "emb",    label: "Servicios de embarcación",     icon: "⛵",  color: "#38BDF8", count: embR,   module: "embarcaciones" },
+        { key: "mant",   label: "Órdenes de mantenimiento",     icon: "🔧",  color: "#A855F7", count: mantR,  module: "mantenimiento" },
+      ].filter(r => r.count > 0);
+
+      setItems(rows);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [userEmail, userRolId]);
+
+  const total = items.reduce((s, r) => s + r.count, 0);
+
+  if (loading) {
+    return (
+      <div style={{ background: B.navyMid, borderRadius: 12, padding: "16px 20px", marginBottom: 24, color: "rgba(255,255,255,0.5)", fontSize: 13 }}>
+        Cargando pendientes de aprobación…
+      </div>
+    );
+  }
+
+  if (items.length === 0) {
+    return (
+      <div style={{ background: B.navyMid, borderRadius: 12, padding: "16px 20px", marginBottom: 24, borderLeft: `4px solid ${B.success}` }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: B.success }}>✓ Todo al día</div>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
+          No tienes nada pendiente por aprobar.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ background: B.navyMid, borderRadius: 12, padding: "20px 24px", marginBottom: 24, borderLeft: `4px solid ${B.warning}` }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#fff" }}>🔔 Por Aprobar</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+            {total} pendiente{total !== 1 ? "s" : ""} · click para ir al módulo
+          </div>
+        </div>
+        <div style={{ padding: "4px 12px", borderRadius: 20, background: B.warning + "22", color: B.warning, fontSize: 12, fontWeight: 700 }}>
+          {total}
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
+        {items.map(r => (
+          <button key={r.key} onClick={() => onNavigate?.(r.module)}
+            style={{
+              display: "flex", alignItems: "center", gap: 12,
+              padding: "12px 14px", borderRadius: 10,
+              background: r.color + "11", border: `1px solid ${r.color}44`,
+              cursor: "pointer", color: "#fff", textAlign: "left",
+              transition: "transform 0.1s, background 0.15s",
+              fontFamily: "inherit",
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = r.color + "22"; e.currentTarget.style.transform = "translateY(-1px)"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = r.color + "11"; e.currentTarget.style.transform = "none"; }}>
+            <div style={{ fontSize: 22 }}>{r.icon}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>{r.label}</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 2 }}>Ir al módulo →</div>
+            </div>
+            <div style={{ padding: "3px 10px", borderRadius: 10, background: r.color, color: "#fff", fontSize: 13, fontWeight: 800, minWidth: 24, textAlign: "center" }}>
+              {r.count}
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Dashboard({ userEmail, userRolId, onNavigate }) {
   const [kpis, setKpis] = useState({});
   const [loading, setLoading] = useState(true);
   // Bug 2026-05: si la pestaña quedaba abierta cruzando medianoche, el
@@ -227,6 +378,10 @@ function Dashboard() {
           color={B.navyLight}
         />
       </div>
+
+      {/* Widget: Por Aprobar — pendientes en cualquier módulo, filtrado por rol/permiso */}
+      <PorAprobarWidget userEmail={userEmail} userRolId={userRolId} onNavigate={onNavigate} />
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <div style={{ background: B.navyMid, borderRadius: 12, padding: 24 }}>
           <h3 style={{ color: B.sand, marginBottom: 16, fontSize: 18 }}>Estado del Sistema</h3>
@@ -378,6 +533,7 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userModulos, setUserModulos] = useState(null); // null = loading
   const [userName, setUserName] = useState("");
+  const [userRolId, setUserRolId] = useState(null);
   const [theme, setTheme] = useState(() => typeof window !== "undefined" ? (localStorage.getItem("atolon_theme") || "dark") : "dark");
   const isLight = theme === "light";
   useEffect(() => { try { localStorage.setItem("atolon_theme", theme); } catch {} }, [theme]);
@@ -426,6 +582,7 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
     supabase.from("usuarios").select("modulos, rol_id, nombre, avatar_color").eq("email", userEmail).maybeSingle()
       .then(async ({ data }) => {
         if (data?.nombre) setUserName(data.nombre);
+        if (data?.rol_id) setUserRolId(data.rol_id);
         const mods = data?.modulos;
         // 0) ¿Es un usuario auditor? Activar modo bloqueo global de writes
         const esAuditor = data?.rol_id === "auditor";
@@ -785,7 +942,7 @@ export default function AtolanOS({ activeModule = "dashboard", onNavigate, modul
               <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)" }}>No tienes permiso para acceder a este módulo.</div>
             </div>
           ) : (
-            moduleContent || <Dashboard />
+            moduleContent || <Dashboard userEmail={userEmail} userRolId={userRolId} onNavigate={onNavigate} />
           )}
         </div>
       </div>
