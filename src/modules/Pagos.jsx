@@ -235,6 +235,7 @@ function TabPorPagar({ ordenes, otros, comisiones = [], nominasDia = [], reload,
       tipo: "anticipo", icon: "🏦", color: B.warning,
       ref: o.codigo, proveedor: o.proveedor_nombre || "—",
       monto: Number(o.anticipo_monto || 0),
+      emitido: o.anticipo_solicitado_at?.slice(0, 10) || o.created_at?.slice(0, 10),
       vence: o.anticipo_solicitado_at?.slice(0, 10),
       cotizacion_url: o.cotizacion_resp_url || null,
       factura_url: o.factura_url || null,
@@ -248,6 +249,7 @@ function TabPorPagar({ ordenes, otros, comisiones = [], nominasDia = [], reload,
         ref: o.factura_data?.factura_numero || o.codigo,
         proveedor: o.proveedor_nombre || "—",
         monto: saldo,
+        emitido: o.factura_data?.fecha_factura || o.factura_data?.fecha_emision || o.fecha_recepcion_factura?.slice(0, 10),
         vence: o.fecha_vencimiento_pago,
         cotizacion_url: o.cotizacion_resp_url || null,
         factura_url: o.factura_url || null,
@@ -263,6 +265,7 @@ function TabPorPagar({ ordenes, otros, comisiones = [], nominasDia = [], reload,
         color: esEmbarcacion ? "#38BDF8" : "#a78bfa",
         ref: o.concepto, proveedor: o.proveedor || "—",
         monto: Number(o.monto || 0),
+        emitido: o.fecha,
         vence: o.fecha_vencimiento,
         factura_url: o.comprobante_url || null,
         gasto: o, accion: "marcar_gasto",
@@ -274,6 +277,7 @@ function TabPorPagar({ ordenes, otros, comisiones = [], nominasDia = [], reload,
       ref: `Comisión sem. ${c.semana_inicio?.slice(5) || ""} → ${c.semana_fin?.slice(5) || ""}`,
       proveedor: c.aliado_nombre || "—",
       monto: Number(c.monto_comision || 0),
+      emitido: c.aprobado_at?.slice(0, 10),
       vence: c.aprobado_at?.slice(0, 10),  // referencia: cuando se aprobó
       comision: c, accion: "marcar_comision",
     }));
@@ -283,6 +287,7 @@ function TabPorPagar({ ordenes, otros, comisiones = [], nominasDia = [], reload,
       ref: `${n.fecha} · ${n.cargo || "—"}`,
       proveedor: n.nombre || "—",
       monto: Number(n.total || 0),
+      emitido: n.fecha,
       vence: n.fecha,
       cuenta_cobro_url: n.cuenta_cobro_url || null,
       nominaDia: n, accion: "marcar_nomina_dia",
@@ -377,6 +382,11 @@ function TabPorPagar({ ordenes, otros, comisiones = [], nominasDia = [], reload,
                     </div>
                     <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
                       {x.ref}
+                      {x.emitido && (
+                        <span style={{ marginLeft: 8, color: "rgba(255,255,255,0.65)" }}>
+                          · 📅 Emitido {fmtFecha(x.emitido)}
+                        </span>
+                      )}
                       {x.vence && (
                         <span style={{ marginLeft: 8, color: venceColor }}>
                           · {dias < 0 ? `⚠ Vencido hace ${Math.abs(dias)}d` : dias === 0 ? "🔔 Vence hoy" : `Vence en ${dias}d`} ({fmtFecha(x.vence)})
