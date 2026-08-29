@@ -920,8 +920,32 @@ function ModalCobro({ llegada, onClose, onSaved }) {
     notas: llegada.notas || "",
     reserva_id: llegada.reserva_id || "",
     aliado_id: llegada.aliado_id || "",
+    // Comisión al comisionista (llegadas a_consumo)
+    comision_metodo: llegada.comision_metodo || "fijo_por_pax",
+    comision_monto_fijo: llegada.comision_monto_fijo ?? 10000,
+    comision_pct: llegada.comision_pct ?? 8,
+    factura_monto: llegada.factura_monto ?? "",
+    factura_url: llegada.factura_url || "",
   });
   const sf = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const [uploadingFactura, setUploadingFactura] = useState(false);
+  async function subirFacturaConsumo(file) {
+    if (!file) return;
+    setUploadingFactura(true);
+    try {
+      const ext = (file.name.split(".").pop() || "pdf").toLowerCase();
+      const path = `llegadas/${llegada.id}-${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("muelle-facturas")
+        .upload(path, file, { upsert: true, contentType: file.type });
+      if (upErr) throw upErr;
+      const { data: pub } = supabase.storage.from("muelle-facturas").getPublicUrl(path);
+      sf("factura_url", pub?.publicUrl || "");
+    } catch (e) {
+      alert("Error subiendo factura: " + (e.message || String(e)));
+    } finally {
+      setUploadingFactura(false);
+    }
+  }
 
   // Reservas del día candidatas para vincular (After Island / Restaurante,
   // sin embarcación Atolón). Incluye la ya vinculada aunque otra llegada
@@ -1001,7 +1025,7 @@ function ModalCobro({ llegada, onClose, onSaved }) {
   const handleConfirmarDatos = async () => {
     if (!supabase || saving) return;
     setSaving(true);
-    await supabase.from("muelle_llegadas").update({
+    const patch = {
       tipo: tipoSel,
       embarcacion_nombre: f.embarcacion_nombre || null,
       matricula: f.matricula || null,
@@ -1012,7 +1036,34 @@ function ModalCobro({ llegada, onClose, onSaved }) {
       notas: f.notas || null,
       reserva_id: f.reserva_id || null,
       aliado_id: f.aliado_id || null,
-    }).eq("id", llegada.id);
+    };
+    // Comisión al comisionista (solo si tipo=a_consumo + aliado)
+    if (tipoSel === "a_consumo" && f.aliado_id) {
+      const paxTotalPagante = (Number(f.pax_a) || 0) + (Number(f.pax_n) || 0);
+      const metodo = f.comision_metodo || "fijo_por_pax";
+      patch.comision_metodo = metodo;
+      if (metodo === "fijo_por_pax") {
+        patch.comision_monto_fijo = Number(f.comision_monto_fijo) || 0;
+        patch.comision_pct = null;
+        patch.factura_monto = null;
+        patch.factura_url = null;
+        patch.comision_calculada = paxTotalPagante * (Number(f.comision_monto_fijo) || 0);
+      } else if (metodo === "pct_consumo") {
+        patch.comision_pct = Number(f.comision_pct) || 0;
+        patch.comision_monto_fijo = null;
+        patch.factura_monto = Number(f.factura_monto) || 0;
+        patch.factura_url = f.factura_url || null;
+        patch.comision_calculada = Math.round((Number(f.factura_monto) || 0) * (Number(f.comision_pct) || 0) / 100);
+        if (f.factura_url && f.factura_monto && !llegada.factura_registrada_at) {
+          patch.factura_registrada_at = new Date().toISOString();
+        }
+      }
+    } else if (!f.aliado_id) {
+      // Sin comisionista → limpiar comisión
+      patch.comision_metodo = null;
+      patch.comision_calculada = null;
+    }
+    await supabase.from("muelle_llegadas").update(patch).eq("id", llegada.id);
     setSaving(false);
     // Después de guardar: si es after_island NO cobrado aún → ir a paso cobro.
     // Si ya fue cobrada, o es otro tipo → cerrar directo.
@@ -1122,12 +1173,102 @@ function ModalCobro({ llegada, onClose, onSaved }) {
               {showComisionista && (
                 <div style={{ marginTop: 10 }}>
                   {f.aliado_id ? (
+                    <>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: B.navyMid, borderRadius: 8 }}>
                       <span style={{ flex: 1, fontSize: 13, color: "#fff", fontWeight: 600 }}>
                         🏢 {aliados.find(a => a.id === f.aliado_id)?.nombre || f.aliado_id}
                       </span>
                       <button onClick={() => sf("aliado_id", "")} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 12 }}>Cambiar</button>
                     </div>
+
+                    {/* Método de comisión — solo para tipo=a_consumo */}
+                    {tipoSel === "a_consumo" && (() => {
+                      const paxTotal = (Number(f.pax_a) || 0) + (Number(f.pax_n) || 0);
+                      const comFijo = paxTotal * (Number(f.comision_monto_fijo) || 0);
+                      const comPct  = (Number(f.factura_monto) || 0) * (Number(f.comision_pct) || 0) / 100;
+                      const comFinal = f.comision_metodo === "pct_consumo" ? comPct : comFijo;
+                      return (
+                        <div style={{ marginTop: 10, padding: 12, background: B.navyMid, borderRadius: 8 }}>
+                          <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 8 }}>
+                            💰 Método de comisión
+                          </div>
+                          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                            <label style={{ flex: 1, padding: "8px 12px", borderRadius: 8, cursor: "pointer",
+                              background: f.comision_metodo === "fijo_por_pax" ? B.sky + "22" : "transparent",
+                              border: `2px solid ${f.comision_metodo === "fijo_por_pax" ? B.sky : B.navyLight}`,
+                              display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#fff" }}>
+                              <input type="radio" checked={f.comision_metodo === "fijo_por_pax"}
+                                onChange={() => sf("comision_metodo", "fijo_por_pax")} />
+                              💵 Fijo por persona
+                            </label>
+                            <label style={{ flex: 1, padding: "8px 12px", borderRadius: 8, cursor: "pointer",
+                              background: f.comision_metodo === "pct_consumo" ? B.sky + "22" : "transparent",
+                              border: `2px solid ${f.comision_metodo === "pct_consumo" ? B.sky : B.navyLight}`,
+                              display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#fff" }}>
+                              <input type="radio" checked={f.comision_metodo === "pct_consumo"}
+                                onChange={() => sf("comision_metodo", "pct_consumo")} />
+                              📊 % del consumo
+                            </label>
+                          </div>
+
+                          {f.comision_metodo === "fijo_por_pax" && (
+                            <div>
+                              <label style={{ ...LS, fontSize: 10 }}>$ por persona</label>
+                              <input type="number" min="0" style={IS}
+                                value={f.comision_monto_fijo}
+                                onChange={e => sf("comision_monto_fijo", e.target.value)} />
+                              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 6 }}>
+                                Comisión: <strong style={{ color: B.sand }}>${comFijo.toLocaleString("es-CO")}</strong> ({paxTotal} pax × ${Number(f.comision_monto_fijo || 0).toLocaleString("es-CO")})
+                              </div>
+                            </div>
+                          )}
+
+                          {f.comision_metodo === "pct_consumo" && (
+                            <div>
+                              <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8, marginBottom: 8 }}>
+                                <div>
+                                  <label style={{ ...LS, fontSize: 10 }}>% comisión</label>
+                                  <input type="number" min="0" max="100" step="0.1" style={IS}
+                                    value={f.comision_pct}
+                                    onChange={e => sf("comision_pct", e.target.value)} />
+                                </div>
+                                <div>
+                                  <label style={{ ...LS, fontSize: 10 }}>Monto factura del cliente ($)</label>
+                                  <input type="number" min="0" style={IS}
+                                    value={f.factura_monto}
+                                    onChange={e => sf("factura_monto", e.target.value)}
+                                    placeholder="Ej: 2000000" />
+                                </div>
+                              </div>
+                              <div style={{ marginBottom: 8 }}>
+                                <input type="file" accept="application/pdf,image/*" id={`fileFacturaConsumoEdit-${llegada.id}`}
+                                  onChange={e => e.target.files?.[0] && subirFacturaConsumo(e.target.files[0])}
+                                  style={{ display: "none" }} />
+                                <label htmlFor={`fileFacturaConsumoEdit-${llegada.id}`}
+                                  style={{ display: "inline-block", padding: "6px 12px", borderRadius: 6,
+                                    background: "#38BDF8", color: "#fff", fontSize: 11, fontWeight: 700,
+                                    cursor: "pointer", opacity: uploadingFactura ? 0.6 : 1 }}>
+                                  {uploadingFactura ? "Subiendo…" : (f.factura_url ? "🔄 Reemplazar factura" : "📤 Adjuntar factura")}
+                                </label>
+                                {f.factura_url && (
+                                  <a href={f.factura_url} target="_blank" rel="noopener"
+                                    style={{ marginLeft: 8, color: "#38BDF8", fontSize: 11 }}>👁 Ver</a>
+                                )}
+                              </div>
+                              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>
+                                Comisión: <strong style={{ color: B.sand }}>${comPct.toLocaleString("es-CO", { maximumFractionDigits: 0 })}</strong>
+                                {" "}({Number(f.comision_pct || 0)}% de ${Number(f.factura_monto || 0).toLocaleString("es-CO")})
+                              </div>
+                            </div>
+                          )}
+
+                          <div style={{ marginTop: 10, padding: 8, background: B.success + "12", borderRadius: 6, fontSize: 11, color: B.success }}>
+                            🤝 Se creará comisión al aliado por <strong>${comFinal.toLocaleString("es-CO", { maximumFractionDigits: 0 })}</strong> (aparece en Comisiones → Por Aprobar).
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    </>
                   ) : showNuevoAliado ? (
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       <input value={nuevoAliado.nombre} onChange={e => setNuevoAliado(p => ({ ...p, nombre: e.target.value }))} placeholder="Nombre del comisionista/agencia" style={IS} />
