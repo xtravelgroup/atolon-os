@@ -275,25 +275,29 @@ export default function Comisiones() {
       const { data: comRows } = await supabase.from("comisiones_semanas").select("reservas_ids");
       const usedIds = new Set((comRows || []).flatMap(c => c.reservas_ids || []));
 
-      // Reservas B2B de la semana seleccionada — solo pagadas (saldo = 0)
-      const [{ data: reservas }, { data: gruposB2B }] = await Promise.all([
+      // Reservas B2B de la semana seleccionada — solo pagadas (saldo = 0).
+      // Además: llegadas A Consumo con aliado y comision_calculada.
+      const [{ data: reservas }, { data: gruposB2B }, { data: llegadasConsumo }] = await Promise.all([
         supabase.from("reservas")
           .select("id, nombre, fecha, tipo, pax_a, pax_n, pax, total, precio_u, precio_neto, descuento_agencia, aliado_id, estado, saldo")
           .gte("fecha", inicio).lte("fecha", fin)
           .not("aliado_id", "is", null)
           .in("estado", ["confirmado", "check_in"])
           .lte("saldo", 0),
-        // Grupos B2B con aliado. NO restringir solo por stage — el stage
-        // 'Realizado' se auto-transiciona por fecha sin verificar pago.
-        // Filtramos aqui y depues, en JS, solo dejamos pasar los que tienen
-        // pagos >= valor cotizado (audit rank 40: antes se comisionaba sobre
-        // eventos no cobrados).
         supabase.from("eventos")
           .select("id, nombre, fecha, aliado_id, pasadias_org, precio_tipo, categoria, stage, valor, pagos")
           .gte("fecha", inicio).lte("fecha", fin)
           .not("aliado_id", "is", null)
           .eq("categoria", "grupo")
           .in("stage", ["Confirmado", "Realizado"]),
+        // Llegadas A Consumo con comisionista: la comisión ya viene calculada
+        // en muelle_llegadas.comision_calculada (pax*fijo o factura*pct/100).
+        supabase.from("muelle_llegadas")
+          .select("id, fecha, embarcacion_nombre, aliado_id, pax_a, pax_n, pax_total, tipo, comision_metodo, comision_calculada, comision_pct, comision_monto_fijo, factura_monto, factura_url")
+          .gte("fecha", inicio).lte("fecha", fin)
+          .eq("tipo", "a_consumo")
+          .not("aliado_id", "is", null)
+          .gt("comision_calculada", 0),
       ]);
 
       // Convert grupos to virtual reserva entries for commission calculation.
@@ -332,7 +336,31 @@ export default function Comisiones() {
         }];
       });
 
-      const allReservas = [...(reservas || []), ...grupoReservas];
+      // Convertir llegadas A Consumo → virtual reserva. La comisión ya está
+      // calculada por MuelleCheckin (pax*fijo o factura*pct/100). Usamos flag
+      // _esLlegada + _comisionOverride para bypassear el cálculo de spread.
+      const llegadaReservas = (llegadasConsumo || []).map(l => ({
+        id: l.id,
+        nombre: `⛵ ${l.embarcacion_nombre || "Llegada"} · A Consumo`,
+        fecha: l.fecha,
+        tipo: "A Consumo",
+        aliado_id: l.aliado_id,
+        pax_a: l.pax_a || l.pax_total || 0,
+        pax_n: l.pax_n || 0,
+        pax: l.pax_total || 0,
+        total: Number(l.factura_monto) || 0,
+        estado: "check_in",
+        saldo: 0,
+        _esLlegada: true,
+        _comisionOverride: Number(l.comision_calculada) || 0,
+        _metodoLlegada: l.comision_metodo,
+        _facturaUrl: l.factura_url,
+        _facturaMonto: Number(l.factura_monto) || 0,
+        _pctLlegada: Number(l.comision_pct) || 0,
+        _fijoLlegada: Number(l.comision_monto_fijo) || 0,
+      }));
+
+      const allReservas = [...(reservas || []), ...grupoReservas, ...llegadaReservas];
       if (!allReservas.length) { setPendientes([]); setLoading(false); return; }
 
       // Excluir ya aprobadas
@@ -397,7 +425,12 @@ export default function Comisiones() {
         }
         const pm = getPasadiasMap(r.aliado_id);
         const aliadoCom = aliadoMap[r.aliado_id]?.comision;
-        const comision = calcComision(r, pm, aliadoCom == null ? null : Number(aliadoCom));
+        // Para llegadas A Consumo la comisión ya viene calculada en muelle_llegadas
+        // (fijo_por_pax = pax*monto; pct_consumo = factura*pct/100). No aplica
+        // la fórmula de spread convenio.
+        const comision = r._esLlegada
+          ? (r._comisionOverride || 0)
+          : calcComision(r, pm, aliadoCom == null ? null : Number(aliadoCom));
         byAliado[r.aliado_id].reservas.push({ ...r, comision });
         byAliado[r.aliado_id].monto += comision;
         byAliado[r.aliado_id].paxTotal += (r.pax_a || r.pax || 0) + (r.pax_n || 0);

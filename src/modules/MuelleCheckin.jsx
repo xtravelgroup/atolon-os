@@ -146,7 +146,16 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
     horas_centro: "", // Castillete tiene 1 motor central
     boca_chica: false, // ← cuando viene de Boca Chica no cuenta como viaje
     aliado_id: reserva?.aliado_id || "",
+    // Comisión al comisionista cuando tipo=a_consumo:
+    //   'fijo_por_pax' → $ por persona (default 10.000)
+    //   'pct_consumo'  → % del monto de factura (default 8), requiere adjuntar factura
+    comision_metodo: "fijo_por_pax",
+    comision_monto_fijo: 10000,
+    comision_pct: 8,
+    factura_monto: "",
+    factura_url: "",
   });
+  const [uploadingFactura, setUploadingFactura] = useState(false);
 
   // Comisionista (B2B): solo aplica a after_island/restaurante/a_consumo, no a lanchas Atolón
   const [showComisionista, setShowComisionista] = useState(!!reserva?.aliado_id);
@@ -159,6 +168,26 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
     supabase.from("aliados_b2b").select("id, nombre, tipo, tel, comision").eq("estado", "activo").order("nombre")
       .then(({ data }) => setAliados(data || []));
   }, [showComisionista, aliados.length]);
+
+  async function subirFacturaConsumo(file) {
+    if (!file) return;
+    setUploadingFactura(true);
+    try {
+      const ext = (file.name.split(".").pop() || "pdf").toLowerCase();
+      const stamp = Date.now();
+      const path = `llegadas/${stamp}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("muelle-facturas")
+        .upload(path, file, { upsert: true, contentType: file.type });
+      if (upErr) throw upErr;
+      const { data: pub } = supabase.storage.from("muelle-facturas").getPublicUrl(path);
+      s("factura_url", pub?.publicUrl || "");
+    } catch (e) {
+      alert("Error subiendo factura: " + (e.message || String(e)));
+    } finally {
+      setUploadingFactura(false);
+    }
+  }
+
   const crearAliado = async () => {
     if (!nuevoAliado.nombre.trim()) { alert("Nombre requerido"); return; }
     const id = `B2B-${Date.now()}`;
@@ -324,6 +353,25 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
       excluir_kpis: excluirKpisAuto,
       aliado_id: f.aliado_id || null,
     };
+
+    // Comisión al comisionista (solo si tipo=a_consumo + aliado_id + método definido)
+    if (tipoSeleccionado === "a_consumo" && f.aliado_id) {
+      const paxTotalPagante = (Number(f.pax_a) || 0) + (Number(f.pax_n) || 0);
+      const metodo = f.comision_metodo || "fijo_por_pax";
+      payload.comision_metodo = metodo;
+      if (metodo === "fijo_por_pax") {
+        payload.comision_monto_fijo = Number(f.comision_monto_fijo) || 0;
+        payload.comision_calculada = paxTotalPagante * (Number(f.comision_monto_fijo) || 0);
+      } else if (metodo === "pct_consumo") {
+        payload.comision_pct = Number(f.comision_pct) || 0;
+        payload.factura_monto = Number(f.factura_monto) || 0;
+        payload.factura_url = f.factura_url || null;
+        payload.comision_calculada = Math.round((Number(f.factura_monto) || 0) * (Number(f.comision_pct) || 0) / 100);
+        if (f.factura_url && f.factura_monto) {
+          payload.factura_registrada_at = new Date().toISOString();
+        }
+      }
+    }
     // Solo incluir foto_url si está disponible (columna puede no existir aún)
     if (foto_url) payload.foto_url = foto_url;
     if (odometro_foto_url) payload.odometro_foto_url = odometro_foto_url;
@@ -485,12 +533,102 @@ function ModalNuevaLlegada({ tipo, fecha, reserva, llegadasDelDia = [], onClose,
             {showComisionista && (
               <div style={{ marginTop: 10 }}>
                 {f.aliado_id ? (
+                  <>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: B.navyMid, borderRadius: 8 }}>
                     <span style={{ flex: 1, fontSize: 13, color: "#fff", fontWeight: 600 }}>
                       🏢 {aliados.find(a => a.id === f.aliado_id)?.nombre || f.aliado_id}
                     </span>
                     <button type="button" onClick={() => s("aliado_id", "")} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 12 }}>Cambiar</button>
                   </div>
+
+                  {/* Método de comisión — solo para llegadas A Consumo */}
+                  {tipoSeleccionado === "a_consumo" && (() => {
+                    const paxTotal = (Number(f.pax_a) || 0) + (Number(f.pax_n) || 0);
+                    const comFijo = paxTotal * (Number(f.comision_monto_fijo) || 0);
+                    const comPct  = (Number(f.factura_monto) || 0) * (Number(f.comision_pct) || 0) / 100;
+                    const comFinal = f.comision_metodo === "pct_consumo" ? comPct : comFijo;
+                    return (
+                      <div style={{ marginTop: 10, padding: 12, background: B.navyMid, borderRadius: 8 }}>
+                        <div style={{ fontSize: 11, color: B.sand, textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 8 }}>
+                          💰 Método de comisión
+                        </div>
+                        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                          <label style={{ flex: 1, padding: "8px 12px", borderRadius: 8, cursor: "pointer",
+                            background: f.comision_metodo === "fijo_por_pax" ? B.sky + "22" : "transparent",
+                            border: `2px solid ${f.comision_metodo === "fijo_por_pax" ? B.sky : B.navyLight}`,
+                            display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#fff" }}>
+                            <input type="radio" checked={f.comision_metodo === "fijo_por_pax"}
+                              onChange={() => s("comision_metodo", "fijo_por_pax")} />
+                            💵 Fijo por persona
+                          </label>
+                          <label style={{ flex: 1, padding: "8px 12px", borderRadius: 8, cursor: "pointer",
+                            background: f.comision_metodo === "pct_consumo" ? B.sky + "22" : "transparent",
+                            border: `2px solid ${f.comision_metodo === "pct_consumo" ? B.sky : B.navyLight}`,
+                            display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#fff" }}>
+                            <input type="radio" checked={f.comision_metodo === "pct_consumo"}
+                              onChange={() => s("comision_metodo", "pct_consumo")} />
+                            📊 % del consumo
+                          </label>
+                        </div>
+
+                        {f.comision_metodo === "fijo_por_pax" && (
+                          <div>
+                            <label style={{ ...LS, fontSize: 10 }}>$ por persona</label>
+                            <input type="number" min="0" style={IS}
+                              value={f.comision_monto_fijo}
+                              onChange={e => s("comision_monto_fijo", e.target.value)} />
+                            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 6 }}>
+                              Comisión: <strong style={{ color: B.sand }}>${comFijo.toLocaleString("es-CO")}</strong> ({paxTotal} pax × ${Number(f.comision_monto_fijo || 0).toLocaleString("es-CO")})
+                            </div>
+                          </div>
+                        )}
+
+                        {f.comision_metodo === "pct_consumo" && (
+                          <div>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8, marginBottom: 8 }}>
+                              <div>
+                                <label style={{ ...LS, fontSize: 10 }}>% comisión</label>
+                                <input type="number" min="0" max="100" step="0.1" style={IS}
+                                  value={f.comision_pct}
+                                  onChange={e => s("comision_pct", e.target.value)} />
+                              </div>
+                              <div>
+                                <label style={{ ...LS, fontSize: 10 }}>Monto factura del cliente ($)</label>
+                                <input type="number" min="0" style={IS}
+                                  value={f.factura_monto}
+                                  onChange={e => s("factura_monto", e.target.value)}
+                                  placeholder="Ej: 2000000" />
+                              </div>
+                            </div>
+                            <div style={{ marginBottom: 8 }}>
+                              <input type="file" accept="application/pdf,image/*" id="fileFacturaConsumo"
+                                onChange={e => e.target.files?.[0] && subirFacturaConsumo(e.target.files[0])}
+                                style={{ display: "none" }} />
+                              <label htmlFor="fileFacturaConsumo"
+                                style={{ display: "inline-block", padding: "6px 12px", borderRadius: 6,
+                                  background: "#38BDF8", color: "#fff", fontSize: 11, fontWeight: 700,
+                                  cursor: "pointer", opacity: uploadingFactura ? 0.6 : 1 }}>
+                                {uploadingFactura ? "Subiendo…" : (f.factura_url ? "🔄 Reemplazar factura" : "📤 Adjuntar factura")}
+                              </label>
+                              {f.factura_url && (
+                                <a href={f.factura_url} target="_blank" rel="noopener"
+                                  style={{ marginLeft: 8, color: "#38BDF8", fontSize: 11 }}>👁 Ver</a>
+                              )}
+                            </div>
+                            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)" }}>
+                              Comisión: <strong style={{ color: B.sand }}>${comPct.toLocaleString("es-CO", { maximumFractionDigits: 0 })}</strong>
+                              {" "}({Number(f.comision_pct || 0)}% de ${Number(f.factura_monto || 0).toLocaleString("es-CO")})
+                            </div>
+                          </div>
+                        )}
+
+                        <div style={{ marginTop: 10, padding: 8, background: B.success + "12", borderRadius: 6, fontSize: 11, color: B.success }}>
+                          🤝 Se creará comisión al aliado por <strong>${comFinal.toLocaleString("es-CO", { maximumFractionDigits: 0 })}</strong> (aparece en Comisiones → Por Aprobar).
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  </>
                 ) : showNuevoAliado ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     <input value={nuevoAliado.nombre} onChange={e => setNuevoAliado(p => ({ ...p, nombre: e.target.value }))} placeholder="Nombre del comisionista/agencia" style={IS} />
