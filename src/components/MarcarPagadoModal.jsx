@@ -34,6 +34,26 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
   const retencionNum = Number(retencion) || 0;
   const montoNeto = Math.max(0, montoBruto - retencionNum);
 
+  // Ya pagado a este ítem (para permitir pagos parciales). Se lee del
+  // campo monto_pagado de la tabla origen. Sirve para mostrar el saldo
+  // real pendiente y para decidir si con este nuevo pago se cubre todo.
+  const yaPagado = Number(
+    pago.oc?.anticipo_monto_pagado ??
+    pago.oc?.monto_pagado ??
+    pago.gasto?.monto_pagado ??
+    pago.comision?.monto_pagado ??
+    pago.nominaDia?.monto_pagado ??
+    0
+  );
+  const totalItem = pago.accion === "marcar_comision" ? montoNeto : montoBruto;
+  const saldoPendiente = Math.max(0, totalItem - yaPagado);
+
+  // Monto que se está pagando ahora (editable, default = saldo pendiente).
+  const [montoAPagar, setMontoAPagar] = useState(String(saldoPendiente || montoBruto));
+  const montoPagoActual = Number(montoAPagar) || 0;
+  const nuevoAcumulado = yaPagado + montoPagoActual;
+  const esPagoTotal = nuevoAcumulado >= totalItem - 0.01;
+
   // Documentos y datos capturados al aprobar (comision) / solicitar (nomina)
   const docs = esComision ? [
     { label: "Cuenta de cobro", url: pago.comision?.cuenta_cobro_url, icon: "📄" },
@@ -96,11 +116,27 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
     return new Date(`${fechaPago}T12:00:00`).toISOString();
   };
 
+  // Registra un pago parcial en la bitácora unificada (para trazabilidad).
+  // Factura OC ya tiene su propio cxp_pagos, así que no se duplica ahí.
+  const logPagoParcial = async (tipo, registroId, comprobanteUrl) => {
+    if (tipo === "factura") return; // ya persiste en cxp_pagos
+    const id = `PPL_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    await supabase.from("pagos_parciales_log").insert({
+      id, tipo, registro_id: registroId,
+      fecha_pago: fechaPago, monto: montoPagoActual,
+      metodo, cuenta_origen: cuentaOrigen.trim() || null,
+      referencia: referencia.trim(), comprobante_url: comprobanteUrl,
+      pagado_por: currentUser?.email || null,
+    }).then(() => {}).catch(() => {}); // best-effort, no bloquea el flujo
+  };
+
   const guardar = async () => {
     if (!referencia.trim()) { setErr("La referencia del pago es requerida."); return; }
     if (!fechaPago)         { setErr("La fecha de pago es requerida."); return; }
     if (esComision && retencionNum < 0) { setErr("La retención no puede ser negativa."); return; }
     if (esComision && retencionNum > montoBruto) { setErr("La retención no puede ser mayor al monto bruto."); return; }
+    if (montoPagoActual <= 0) { setErr("El monto a pagar debe ser mayor a cero."); return; }
+    if (montoPagoActual > saldoPendiente + 0.01) { setErr(`El monto ($${montoPagoActual.toLocaleString("es-CO")}) excede el saldo pendiente ($${saldoPendiente.toLocaleString("es-CO")}).`); return; }
     setSaving(true);
     setErr("");
     try {
@@ -109,31 +145,35 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
       const pagoTs = fechaPagoToTimestamp();
 
       if (pago.accion === "marcar_anticipo") {
+        const nuevoAcum = yaPagado + montoPagoActual;
+        const completo = nuevoAcum >= totalItem - 0.01;
         await supabase.from("ordenes_compra").update({
-          anticipo_pagado:           true,
-          anticipo_pagado_at:        pagoTs,
-          anticipo_pagado_por:       currentUser?.email || null,
+          anticipo_monto_pagado:     nuevoAcum,
+          anticipo_pagado:           completo,
+          anticipo_pagado_at:        completo ? pagoTs : null,
+          anticipo_pagado_por:       completo ? (currentUser?.email || null) : null,
           anticipo_referencia_pago:  referencia.trim(),
-          anticipo_comprobante_url:  comprobante_url,
-          estado:                    "confirmada",
+          anticipo_comprobante_url:  comprobante_url || pago.oc?.anticipo_comprobante_url || null,
+          estado:                    completo ? "confirmada" : pago.oc.estado,
           updated_at:                new Date().toISOString(),
         }).eq("id", pago.oc.id);
+        await logPagoParcial("anticipo", pago.oc.id, comprobante_url);
       } else if (pago.accion === "marcar_factura") {
-        const monto = Number(pago.monto);
+        // Facturas OC ya soportan parciales nativamente vía cxp_pagos.
         const id = `PAGO_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
         await supabase.from("cxp_pagos").insert({
           id,
           oc_id:           pago.oc.id,
           oc_codigo:       pago.oc.codigo,
           fecha_pago:      fechaPago,
-          monto,
+          monto:           montoPagoActual,
           metodo,
           cuenta_origen:   cuentaOrigen.trim() || null,
           referencia:      referencia.trim(),
           comprobante_url,
           created_by:      currentUser?.email,
         });
-        const nuevoTotal = Number(pago.oc.monto_pagado || 0) + monto;
+        const nuevoTotal = Number(pago.oc.monto_pagado || 0) + montoPagoActual;
         const completa   = nuevoTotal >= Number(pago.oc.total || 0) - 0.01;
         await supabase.from("ordenes_compra").update({
           monto_pagado:    nuevoTotal,
@@ -142,44 +182,56 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
           estado:          completa ? "pagada" : pago.oc.estado,
         }).eq("id", pago.oc.id);
       } else if (pago.accion === "marcar_gasto") {
+        const nuevoAcum = yaPagado + montoPagoActual;
+        const completo = nuevoAcum >= totalItem - 0.01;
         await supabase.from("pagos_otros").update({
-          pagado:          true,
-          pagado_at:       pagoTs,
-          pagado_por:      currentUser?.email || null,
+          monto_pagado:    nuevoAcum,
+          pagado:          completo,
+          pagado_at:       completo ? pagoTs : null,
+          pagado_por:      completo ? (currentUser?.email || null) : null,
           referencia:      referencia.trim(),
           cuenta_origen:   cuentaOrigen.trim() || null,
           metodo_pago:     metodo,
-          comprobante_url,
+          comprobante_url: comprobante_url || pago.gasto?.comprobante_url || null,
           updated_at:      new Date().toISOString(),
         }).eq("id", pago.gasto.id);
+        await logPagoParcial(pago.tipo === "embarcacion" ? "embarcacion" : "gasto", pago.gasto.id, comprobante_url);
       } else if (pago.accion === "marcar_comision") {
-        const { data: upd, error: upErr } = await supabase.from("comisiones_semanas").update({
-          estado:               "ejecutado",
-          ejecutado_at:         pagoTs,
-          ejecutado_por:        currentUser?.email || null,
+        const nuevoAcum = yaPagado + montoPagoActual;
+        const completo = nuevoAcum >= totalItem - 0.01;
+        const patch = {
+          monto_pagado:         nuevoAcum,
           pago_referencia:      referencia.trim(),
           pago_metodo:          metodo,
           pago_cuenta_origen:   cuentaOrigen.trim() || null,
-          pago_comprobante_url: comprobante_url,
+          pago_comprobante_url: comprobante_url || pago.comision?.pago_comprobante_url || null,
           pago_retencion:       retencionNum,
           pago_monto_neto:      montoNeto,
-        }).eq("id", pago.comision.id).select("id");
+        };
+        if (completo) {
+          patch.estado = "ejecutado";
+          patch.ejecutado_at = pagoTs;
+          patch.ejecutado_por = currentUser?.email || null;
+        }
+        const { data: upd, error: upErr } = await supabase.from("comisiones_semanas").update(patch).eq("id", pago.comision.id).select("id");
         if (upErr) throw upErr;
         if (!upd || upd.length === 0) throw new Error("No se aplicó el pago (permisos o comisión no encontrada). Contacta al administrador.");
+        await logPagoParcial("comision", pago.comision.id, comprobante_url);
       } else if (pago.accion === "marcar_nomina_dia") {
-        // Nómina por día: marcar como pagado, guardar trazabilidad del pago.
-        // Antes se toggleaba manualmente desde el módulo Nómina por Día — ya no:
-        // el pago SIEMPRE fluye desde acá (Pagos → confirmar pago).
+        const nuevoAcum = yaPagado + montoPagoActual;
+        const completo = nuevoAcum >= totalItem - 0.01;
         await supabase.from("nomina_por_dia").update({
-          pagado:           true,
-          pagado_at:        pagoTs,
-          pagado_por:       currentUser?.email || null,
+          monto_pagado:     nuevoAcum,
+          pagado:           completo,
+          pagado_at:        completo ? pagoTs : null,
+          pagado_por:       completo ? (currentUser?.email || null) : null,
           referencia_pago:  referencia.trim(),
           metodo_pago:      metodo,
           cuenta_origen:    cuentaOrigen.trim() || null,
-          comprobante_url:  comprobante_url,
+          comprobante_url:  comprobante_url || pago.nominaDia?.comprobante_url || null,
           updated_at:       new Date().toISOString(),
         }).eq("id", pago.nominaDia.id);
+        await logPagoParcial("nomina_dia", pago.nominaDia.id, comprobante_url);
       }
       onSaved?.();
     } catch (e) {
@@ -231,6 +283,48 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
               )}
             </div>
           )}
+
+          {/* Monto a pagar — editable para permitir pagos parciales */}
+          <div style={{ background: B.navy, borderRadius: 8, padding: 12, border: `1px solid ${B.navyLight}` }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 8 }}>
+              <div>
+                <label style={LS}>Total del ítem</label>
+                <div style={{ padding: "10px 14px", background: B.navyLight, borderRadius: 8, color: "rgba(255,255,255,0.6)", fontSize: 13 }}>
+                  {COP(totalItem)}
+                </div>
+              </div>
+              <div>
+                <label style={LS}>Ya pagado antes</label>
+                <div style={{ padding: "10px 14px", background: B.navyLight, borderRadius: 8, color: yaPagado > 0 ? B.success : "rgba(255,255,255,0.4)", fontSize: 13, fontWeight: yaPagado > 0 ? 700 : 400 }}>
+                  {COP(yaPagado)}
+                </div>
+              </div>
+            </div>
+            <div>
+              <label style={LS}>Monto a pagar ahora * <span style={{ color: "rgba(255,255,255,0.4)", textTransform: "none", letterSpacing: 0, fontSize: 10 }}>(editable para pagos parciales)</span></label>
+              <input type="number" min="0" step="0.01" value={montoAPagar}
+                onChange={e => setMontoAPagar(e.target.value)} style={{ ...IS, fontWeight: 700, fontSize: 15 }} />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>
+                  Saldo pendiente: <strong style={{ color: B.sand }}>{COP(saldoPendiente)}</strong>
+                </div>
+                <button type="button" onClick={() => setMontoAPagar(String(saldoPendiente))}
+                  style={{ padding: "4px 10px", background: "transparent", border: `1px solid ${B.sand + "55"}`, color: B.sand, borderRadius: 6, fontSize: 10, cursor: "pointer", fontWeight: 700 }}>
+                  Pagar todo el saldo
+                </button>
+              </div>
+              {!esPagoTotal && montoPagoActual > 0 && (
+                <div style={{ marginTop: 8, padding: 8, background: B.warning + "22", color: B.warning, borderRadius: 6, fontSize: 11 }}>
+                  ⚠ Pago parcial · quedan pendientes <strong>{COP(totalItem - nuevoAcumulado)}</strong>. El ítem seguirá en Por Pagar.
+                </div>
+              )}
+              {esPagoTotal && (
+                <div style={{ marginTop: 8, padding: 8, background: B.success + "22", color: B.success, borderRadius: 6, fontSize: 11 }}>
+                  ✓ Pago total — se marcará como completado y saldrá de Por Pagar.
+                </div>
+              )}
+            </div>
+          </div>
 
           <div>
             <label style={LS}>Referencia del pago *</label>

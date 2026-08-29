@@ -230,17 +230,24 @@ function TabPorPagar({ ordenes, otros, comisiones = [], nominasDia = [], reload,
 
   const items = useMemo(() => {
     const list = [];
-    // Anticipos
-    ordenes.filter(o => o.anticipo_requerido && !o.anticipo_pagado).forEach(o => list.push({
-      tipo: "anticipo", icon: "🏦", color: B.warning,
-      ref: o.codigo, proveedor: o.proveedor_nombre || "—",
-      monto: Number(o.anticipo_monto || 0),
-      emitido: o.anticipo_solicitado_at?.slice(0, 10) || o.created_at?.slice(0, 10),
-      vence: o.anticipo_solicitado_at?.slice(0, 10),
-      cotizacion_url: o.cotizacion_resp_url || null,
-      factura_url: o.factura_url || null,
-      oc: o, accion: "marcar_anticipo",
-    }));
+    // Anticipos (respeta pagos parciales via anticipo_monto_pagado)
+    ordenes.filter(o => o.anticipo_requerido && !o.anticipo_pagado).forEach(o => {
+      const totalAnt = Number(o.anticipo_monto || 0);
+      const pagadoAnt = Number(o.anticipo_monto_pagado || 0);
+      const saldoAnt = Math.max(0, totalAnt - pagadoAnt);
+      list.push({
+        tipo: "anticipo", icon: "🏦", color: B.warning,
+        ref: o.codigo, proveedor: o.proveedor_nombre || "—",
+        monto: saldoAnt,
+        monto_total: totalAnt,
+        monto_pagado: pagadoAnt,
+        emitido: o.anticipo_solicitado_at?.slice(0, 10) || o.created_at?.slice(0, 10),
+        vence: o.anticipo_solicitado_at?.slice(0, 10),
+        cotizacion_url: o.cotizacion_resp_url || null,
+        factura_url: o.factura_url || null,
+        oc: o, accion: "marcar_anticipo",
+      });
+    });
     // Facturas
     ordenes.filter(o => o.factura_aplicada && !o.pagada_completa).forEach(o => {
       const saldo = Number(o.total || 0) - Number(o.monto_pagado || 0);
@@ -259,12 +266,17 @@ function TabPorPagar({ ordenes, otros, comisiones = [], nominasDia = [], reload,
     // Gastos + Embarcaciones (misma tabla pagos_otros, se distinguen por categoria)
     otros.filter(o => !o.pagado).forEach(o => {
       const esEmbarcacion = o.categoria === "transporte-embarcacion";
+      const totalOtro = Number(o.monto || 0);
+      const pagadoOtro = Number(o.monto_pagado || 0);
+      const saldoOtro = Math.max(0, totalOtro - pagadoOtro);
       list.push({
         tipo: esEmbarcacion ? "embarcacion" : "gasto",
         icon: esEmbarcacion ? "⛵" : "💸",
         color: esEmbarcacion ? "#38BDF8" : "#a78bfa",
         ref: o.concepto, proveedor: o.proveedor || "—",
-        monto: Number(o.monto || 0),
+        monto: saldoOtro,
+        monto_total: totalOtro,
+        monto_pagado: pagadoOtro,
         emitido: o.fecha,
         vence: o.fecha_vencimiento,
         factura_url: o.comprobante_url || null,
@@ -396,6 +408,11 @@ function TabPorPagar({ ordenes, otros, comisiones = [], nominasDia = [], reload,
                   </div>
                   <div style={{ textAlign: "right" }} onClick={e => e.stopPropagation()}>
                     <div style={{ fontSize: 16, fontWeight: 800, color: B.sand, fontFamily: "'Barlow Condensed', sans-serif" }}>{COP(x.monto)}</div>
+                    {x.monto_pagado > 0 && (
+                      <div style={{ fontSize: 10, color: B.success, marginTop: 2 }}>
+                        Abonado {COP(x.monto_pagado)} de {COP(x.monto_total)}
+                      </div>
+                    )}
                     <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", alignItems: "center", marginTop: 6, flexWrap: "wrap" }}>
                       {x.cotizacion_url && (
                         <a href={x.cotizacion_url} target="_blank" rel="noreferrer"
