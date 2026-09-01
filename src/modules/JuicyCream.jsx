@@ -16,6 +16,7 @@ import { wompiCheckoutUrl } from "../lib/wompi";
 import PhoneInput from "../components/PhoneInput.jsx";
 import { normalizarTelefono } from "../lib/telefono.js";
 import { crearSesionPago } from "../lib/internacional";
+import { convertirCopAUsd } from "../lib/trm";
 import ZohoPaymentWidget from "../components/ZohoPaymentWidget.jsx";
 
 const COP = n => `$${Math.round(Number(n) || 0).toLocaleString("es-CO")}`;
@@ -1162,8 +1163,9 @@ function CheckoutModal({ item, onClose, onConfirmar }) {
     const id = await crearReservaPendiente("tarjeta_internacional");
     if (!id) { setBusy(false); return; }
     try {
-      const tasa = 4200; // COP → USD aprox; el backend usa tasa real si la tiene
-      const amountUSD = Math.ceil(totalFinal / tasa);
+      // TRM oficial (datos.gov.co) menos ajuste configurable
+      const conv = await convertirCopAUsd(totalFinal);
+      const amountUSD = conv.amountUSD;
       const session = await crearSesionPago({
         amount: amountUSD, currency: "USD", reference: id,
         description: `JUICY & CREAM · ${item.label}`,

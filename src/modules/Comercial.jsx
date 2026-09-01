@@ -7,6 +7,7 @@ import { supabase } from "../lib/supabase";
 import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, feValidate, fePayload } from "../lib/FacturaElectronicaForm.jsx";
 import PhoneInput from "../components/PhoneInput.jsx";
 import { crearSesionPago } from "../lib/internacional";
+import { convertirCopAUsd } from "../lib/trm";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -635,9 +636,16 @@ function LeadDetail({ lead, onClose, onUpdateEtapa }) {
     try {
       const reserva = await upsertReserva();
       if (!reserva) { setTerminando(false); return; }
-      // Convertir COP a USD (tasa fallback 4200)
-      const tasa = 4200;
-      const amountUSD = Math.ceil((reserva.total || 0) / tasa);
+      // Convertir COP a USD usando TRM oficial del día (datos.gov.co) menos ajuste
+      let amountUSD;
+      try {
+        const conv = await convertirCopAUsd(reserva.total || 0);
+        amountUSD = conv.amountUSD;
+      } catch (e) {
+        alert("No se pudo obtener la tasa del día para el cobro internacional. Intenta más tarde.");
+        setTerminando(false);
+        return;
+      }
       const session = await crearSesionPago({
         amount: amountUSD,
         currency: "USD",

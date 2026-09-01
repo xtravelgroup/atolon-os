@@ -3,6 +3,7 @@ import { B, COP } from "../brand";
 import { supabase } from "../lib/supabase";
 import { wompiCheckoutUrl } from "../lib/wompi";
 import { crearSesionPago, getMerchantInternacional } from "../lib/internacional";
+import { convertirCopAUsd } from "../lib/trm";
 import AvisoCargoInternacional from "../components/AvisoCargoInternacional";
 import AtolanTrack from "../lib/AtolanTrack";
 import { waSendConfirmacion } from "../lib/whatsapp";
@@ -700,12 +701,20 @@ export default function PagoCliente() {
     if (!(await capturarAutorizacion(fresh))) return;
     setProcesando("stripe");
     try {
-      // Tasa USD/COP fallback (4200). El verdadero blindaje contra fraude de
-      // monto es el webhook firmado que reconcilia amount_total contra
-      // reserva.total leido de DB (ver stripe-webhook + zoho-payments).
-      const tasa = 4200;
+      // TRM oficial (SuperFinanciera vía datos.gov.co) menos ajuste
+      // configurable (default 100 COP). El webhook firmado reconcilia
+      // amount contra reserva.total; acá cuidamos que el USD refleje
+      // el COP real, no una constante desactualizada.
       const totalACobrar = Number(fresh.saldo) > 0 ? Number(fresh.saldo) : Number(fresh.total);
-      const amountUSD = Math.ceil(totalACobrar / tasa);
+      let conv;
+      try {
+        conv = await convertirCopAUsd(totalACobrar);
+      } catch (e) {
+        setError("No se pudo obtener la tasa del día para el cobro internacional. Intenta con Wompi (COP) o contacta a la agencia.");
+        setProcesando(null);
+        return;
+      }
+      const amountUSD = conv.amountUSD;
       const session = await crearSesionPago({
         amount: amountUSD,
         currency: "USD",
@@ -717,6 +726,17 @@ export default function PagoCliente() {
         context: "reserva",
         context_id: fresh.id,
       });
+      // Persistir la tasa aplicada en la sesión Zoho para auditoría
+      if (session?.payments_session_id) {
+        supabase.from("pagos_zoho_sessions")
+          .update({
+            tasa_aplicada:        conv.tasa_efectiva,
+            trm_oficial_al_cobro: conv.trm_oficial,
+            monto_cop_origen:     totalACobrar,
+          })
+          .eq("payment_link_id", session.payments_session_id)
+          .then(() => {}, () => {});
+      }
       // Nuevo flujo: widget embebido (Zoho Pay) — abre modal con el widget
       if (session?.payments_session_id && session?.widget?.account_id) {
         setZohoSession(session);

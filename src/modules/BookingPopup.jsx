@@ -16,6 +16,7 @@ import ZohoPaymentWidget from "../components/ZohoPaymentWidget.jsx";
 import PhoneInput from "../components/PhoneInput.jsx";
 import { normalizarTelefono } from "../lib/telefono.js";
 import { crearSesionPago, getMerchantInternacional } from "../lib/internacional";
+import { convertirCopAUsd } from "../lib/trm";
 import { useBreakpoint } from "../lib/responsive";
 
 // ── Palette (light theme) ───────────────────────────────────────────────────
@@ -868,9 +869,9 @@ export default function BookingPopup() {
       try {
         const merchantInfo = await getMerchantInternacional();
         console.log("[Pago internacional] Merchant activo:", merchantInfo);
-        // Convertir COP a USD (monto que usa Zoho/Stripe)
-        const tasa = 4200; // fallback, el backend lee la tasa real si es necesario
-        const amountUSD = Math.ceil(grandTotal / tasa);
+        // Convertir COP a USD usando TRM oficial (datos.gov.co) menos ajuste
+        const conv = await convertirCopAUsd(grandTotal);
+        const amountUSD = conv.amountUSD;
         console.log("[Pago internacional] Llamando crearSesionPago", { amount: amountUSD, reference: reservaId });
         const session = await crearSesionPago({
           amount: amountUSD,
