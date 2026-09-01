@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { B, COP, todayStr } from "../brand";
 import { generarChargebackPDF } from "../lib/generarChargebackPDF";
+import { logAccion } from "../lib/logAccion";
 
 // Proveedores de pago con tarjeta (los que pueden generar contracargo/chargeback).
 const CARD_PROVIDERS = ["Wompi", "stripe", "Datafono", "zoho_pay"];
@@ -30,7 +31,16 @@ const firstOfMonth = () => {
 };
 
 export default function Reportes() {
-  const [tab, setTab] = useState("cortesias");
+  // Persistir tab activa para que al volver de un pop-up de Reserva (que remonta
+  // este componente vía atolon-navigate-back) se conserve en Facturación en vez
+  // de resetear al default.
+  const [tab, setTab] = useState(() => {
+    try { return localStorage.getItem("reportes_tab") || "cortesias"; }
+    catch { return "cortesias"; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("reportes_tab", tab); } catch {}
+  }, [tab]);
 
   return (
     <div style={{ padding: "20px 24px", maxWidth: 1300, margin: "0 auto", color: "#fff" }}>
@@ -346,15 +356,29 @@ function ReporteFacturacionDiaria() {
     }
   };
 
-  const marcarEmitida = async (id, numeroFactura, tipo = "reserva") => {
-    if (!numeroFactura?.trim()) return alert("Ingresá el número de factura");
+  const marcarEmitida = async (id, numeroFactura, tipo = "reserva", isEdit = false) => {
+    if (!numeroFactura?.trim()) return alert("Ingresa el número de factura");
     const tabla = tipo === "muelle" ? "muelle_llegadas" : "reservas";
-    const { error } = await supabase.from(tabla).update({
-      fe_estado: "emitida",
-      fe_numero_factura: numeroFactura.trim(),
-      fe_emitida_at: new Date().toISOString(),
-    }).eq("id", id);
+    // En modo edición sólo cambiamos el número (conservamos fe_emitida_at original)
+    const upd = isEdit
+      ? { fe_numero_factura: numeroFactura.trim() }
+      : {
+          fe_estado: "emitida",
+          fe_numero_factura: numeroFactura.trim(),
+          fe_emitida_at: new Date().toISOString(),
+        };
+    const { error } = await supabase.from(tabla).update(upd).eq("id", id);
     if (error) return alert("Error: " + error.message);
+    // Audit log — así queda registro de quién corrigió el número y cuándo
+    if (isEdit) {
+      logAccion({
+        modulo: "reportes",
+        accion: "editar_numero_factura",
+        tabla,
+        registroId: id,
+        detalles: { nuevo_numero: numeroFactura.trim() },
+      });
+    }
     setShowEmitirModal(null);
     cargar();
   };
@@ -523,7 +547,16 @@ function ReporteFacturacionDiaria() {
                   </td>
                   <td style={td}>{r.nombre}</td>
                   <td style={td}>{r.fe_tipo_documento} {r.fe_numero_documento}</td>
-                  <td style={{ ...td, fontWeight: 700, color: B.success }}>{r.fe_numero_factura}</td>
+                  <td style={{ ...td, fontWeight: 700, color: B.success }}>
+                    <span>{r.fe_numero_factura}</span>
+                    <button
+                      onClick={() => setShowEmitirModal({ ...r, __edit: true })}
+                      title="Editar número de factura"
+                      style={{ marginLeft: 6, background: "none", border: "none", color: B.warning, cursor: "pointer", fontSize: 11, padding: "2px 6px" }}
+                    >
+                      ✏️
+                    </button>
+                  </td>
                   <td style={td}>{r.fe_emitida_at ? new Date(r.fe_emitida_at).toLocaleString("es-CO") : "—"}</td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(r.total)}</td>
                 </tr>
@@ -562,9 +595,16 @@ function ReporteFacturacionDiaria() {
                   <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(r.total)}</td>
                   <td style={td}>
                     {r.fe_estado === "emitida" ? (
-                      <span style={{ fontWeight: 700, color: B.success }}>
+                      <span style={{ fontWeight: 700, color: B.success, display: "inline-flex", alignItems: "center", gap: 4 }}>
                         ✓ {r.fe_numero_factura}
-                        {r.fe_emitida_at && <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400, marginLeft: 6 }}>{new Date(r.fe_emitida_at).toLocaleDateString("es-CO")}</span>}
+                        {r.fe_emitida_at && <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400 }}>{new Date(r.fe_emitida_at).toLocaleDateString("es-CO")}</span>}
+                        <button
+                          onClick={() => setShowEmitirModal({ ...r, __edit: true })}
+                          title="Editar número de factura"
+                          style={{ background: "none", border: "none", color: B.warning, cursor: "pointer", fontSize: 11, padding: "2px 4px" }}
+                        >
+                          ✏️
+                        </button>
                       </span>
                     ) : (
                       <button onClick={() => setShowEmitirModal(r)} style={{ ...BTN(B.success), fontSize: 11, padding: "4px 10px" }}>
@@ -614,12 +654,19 @@ function ReporteFacturacionDiaria() {
                   <td style={td}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                       {m.fe_estado === "emitida" ? (
-                        <span style={{ fontWeight: 700, color: B.success, fontSize: 11 }}>
+                        <span style={{ fontWeight: 700, color: B.success, fontSize: 11, display: "inline-flex", alignItems: "center", gap: 4 }}>
                           ✓ {m.fe_numero_factura}
-                          {m.fe_emitida_at && <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400, marginLeft: 6 }}>{new Date(m.fe_emitida_at).toLocaleDateString("es-CO")}</span>}
+                          {m.fe_emitida_at && <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400 }}>{new Date(m.fe_emitida_at).toLocaleDateString("es-CO")}</span>}
+                          <button
+                            onClick={() => setShowEmitirModal({ ...m, __tipo: "muelle", nombre: m.embarcacion_nombre, __edit: true, total: m.total_cobrado })}
+                            title="Editar número de factura"
+                            style={{ background: "none", border: "none", color: B.warning, cursor: "pointer", fontSize: 11, padding: "2px 4px" }}
+                          >
+                            ✏️
+                          </button>
                         </span>
                       ) : (
-                        <button onClick={() => setShowEmitirModal({ ...m, __tipo: "muelle", nombre: m.embarcacion_nombre })} style={{ ...BTN(B.success), fontSize: 11, padding: "4px 10px" }}>
+                        <button onClick={() => setShowEmitirModal({ ...m, __tipo: "muelle", nombre: m.embarcacion_nombre, total: m.total_cobrado })} style={{ ...BTN(B.success), fontSize: 11, padding: "4px 10px" }}>
                           ✓ Marcar emitida
                         </button>
                       )}
@@ -714,7 +761,7 @@ function ReporteFacturacionDiaria() {
 
       {/* Modal: marcar como emitida */}
       {showEmitirModal && (
-        <EmitirFEModal reserva={showEmitirModal} onClose={() => setShowEmitirModal(null)} onConfirm={(num) => marcarEmitida(showEmitirModal.id, num, showEmitirModal.__tipo || "reserva")} />
+        <EmitirFEModal reserva={showEmitirModal} onClose={() => setShowEmitirModal(null)} onConfirm={(num) => marcarEmitida(showEmitirModal.id, num, showEmitirModal.__tipo || "reserva", !!showEmitirModal.__edit)} />
       )}
       {vincularMuelle && (
         <VincularReservaModal
@@ -896,25 +943,48 @@ function VincularReservaModal({ llegada, onClose, onConfirm }) {
 }
 
 function EmitirFEModal({ reserva, onClose, onConfirm }) {
-  const [num, setNum] = useState("");
+  const isEdit = !!reserva.__edit;
+  const [num, setNum] = useState(isEdit ? (reserva.fe_numero_factura || "") : "");
   const esFE = !!(reserva.fe_tipo_documento && reserva.fe_numero_documento);
+  const titulo = isEdit
+    ? "Editar número de factura electrónica"
+    : (esFE ? "Marcar Factura Electrónica como emitida" : "Marcar factura emitida (consumidor final)");
+  const cta = isEdit ? "💾 Guardar cambio" : "✓ Confirmar emisión";
+  const numOriginal = isEdit ? (reserva.fe_numero_factura || "") : "";
+  const cambio = isEdit && num.trim() && num.trim() !== numOriginal;
   return (
     <div onClick={e => e.target === e.currentTarget && onClose()}
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ background: B.navyMid, borderRadius: 14, padding: 24, width: 460, maxWidth: "92vw", border: `1px solid ${B.navyLight}` }}>
         <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 6, fontFamily: "'Barlow Condensed', sans-serif" }}>
-          {esFE ? "Marcar Factura Electrónica como emitida" : "Marcar factura emitida (consumidor final)"}
+          {titulo}
         </div>
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", marginBottom: 16 }}>
           {reserva.nombre} · {esFE ? `${reserva.fe_tipo_documento} ${reserva.fe_numero_documento}` : "Consumidor final"} · <strong>{COP(reserva.total)}</strong>
         </div>
+        {isEdit && numOriginal && (
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 10, padding: "6px 10px", background: B.navy, borderRadius: 6 }}>
+            Número actual: <strong style={{ color: B.warning }}>{numOriginal}</strong>
+          </div>
+        )}
         <label style={LS}>Número de factura *</label>
         <input value={num} onChange={e => setNum(e.target.value)} placeholder="Ej: FE-12345"
           autoFocus
           style={IS} />
+        {cambio && (
+          <div style={{ marginTop: 8, padding: "6px 10px", background: `${B.warning}22`, border: `1px solid ${B.warning}55`, borderRadius: 6, fontSize: 11, color: B.warning }}>
+            ⚠️ Vas a cambiar el número de factura de "{numOriginal}" a "{num.trim()}"
+          </div>
+        )}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 }}>
           <button onClick={onClose} style={BTN(B.navyLight)}>Cancelar</button>
-          <button onClick={() => onConfirm(num)} disabled={!num.trim()} style={{ ...BTN(B.success), opacity: !num.trim() ? 0.5 : 1 }}>✓ Confirmar emisión</button>
+          <button
+            onClick={() => onConfirm(num)}
+            disabled={!num.trim() || (isEdit && !cambio)}
+            style={{ ...BTN(B.success), opacity: (!num.trim() || (isEdit && !cambio)) ? 0.5 : 1 }}
+          >
+            {cta}
+          </button>
         </div>
       </div>
     </div>
