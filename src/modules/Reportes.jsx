@@ -31,16 +31,10 @@ const firstOfMonth = () => {
 };
 
 export default function Reportes() {
-  // Persistir tab activa para que al volver de un pop-up de Reserva (que remonta
-  // este componente vía atolon-navigate-back) se conserve en Facturación en vez
-  // de resetear al default.
-  const [tab, setTab] = useState(() => {
-    try { return localStorage.getItem("reportes_tab") || "cortesias"; }
-    catch { return "cortesias"; }
-  });
-  useEffect(() => {
-    try { localStorage.setItem("reportes_tab", tab); } catch {}
-  }, [tab]);
+  // Default = Facturación Diaria (el reporte más usado día a día).
+  // Como el default coincide con el reporte desde el que se abren pop-ups
+  // de reserva, al cerrarlos se vuelve automáticamente al mismo tab.
+  const [tab, setTab] = useState("facturacion");
 
   return (
     <div style={{ padding: "20px 24px", maxWidth: 1300, margin: "0 auto", color: "#fff" }}>
