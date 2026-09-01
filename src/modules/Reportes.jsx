@@ -196,7 +196,16 @@ function ReporteComedor() {
 //   • Otros (muelle, actividades)
 // Permite marcar reservas como "FE emitida" y exportar a CSV.
 function ReporteFacturacionDiaria() {
-  const [fecha, setFecha] = useState(todayStr());
+  // Persistir la fecha seleccionada — al abrir una reserva y cerrarla, este
+  // componente se remonta (por atolon-navigate-back) y sin esto perderíamos
+  // la fecha que el user tenía filtrada.
+  const [fecha, setFecha] = useState(() => {
+    try { return sessionStorage.getItem("facturacion_fecha") || todayStr(); }
+    catch { return todayStr(); }
+  });
+  useEffect(() => {
+    try { sessionStorage.setItem("facturacion_fecha", fecha); } catch {}
+  }, [fecha]);
   const [reservas, setReservas] = useState([]);
   const [eventos, setEventos] = useState([]);
   const [muelle, setMuelle] = useState([]);
