@@ -829,31 +829,49 @@ export default function Metas() {
   }, [metasDB]);
 
   // Rankings per dept
+  //
+  // Antes filtraba SOLO por `dept_ventas === "grupos"` para el tab Grupos,
+  // pero todos los vendedores en la BD hoy están marcados como 'pasadias'.
+  // Un vendedor de pasadías puede perfectamente cerrar un evento grupal
+  // (ej: Paola Mangones y Violeta Simancas tenían eventos en agosto y no
+  // salían). Ahora unimos tres fuentes: vendedores del dept configurado +
+  // los que tienen actividad real ese mes + los que tienen meta > 0.
   const rankings = useMemo(() => {
-    const pasVendedores = vendedores.filter(v => v.dept_ventas === "pasadias");
-    const gruVendedores = vendedores.filter(v => v.dept_ventas === "grupos");
+    const buildRanking = (deptKey, dataArr, metricField) => {
+      const nombres = new Set();
+      // 1) Vendedores asignados formalmente al depto (respeta config)
+      vendedores.filter(v => v.dept_ventas === deptKey).forEach(v => nombres.add(v.nombre));
+      // 2) Vendedores con actividad real en ese depto este período
+      dataArr.forEach(d => {
+        if (d.vendedor && d.vendedor !== "Sin asignar") nombres.add(d.vendedor);
+      });
+      // 3) Vendedores con meta configurada en ese depto (aunque no tengan actividad)
+      metasDB
+        .filter(m => m.departamento === deptKey && m.tipo === "vendedor" && m.vendedor_nombre)
+        .forEach(m => {
+          if ((m.meta_pasadias || 0) > 0 || (m.meta_ingresos || 0) > 0) {
+            nombres.add(m.vendedor_nombre);
+          }
+        });
 
-    const pasRanking = pasVendedores.map(v => {
-      const rData = reservasData.find(r => r.vendedor === v.nombre) || { pasadias: 0, ingresos: 0 };
-      const mRow  = metasDB.find(m => m.departamento === "pasadias" && m.tipo === "vendedor" && m.vendedor_nombre === v.nombre);
-      return {
-        nombre: v.nombre,
-        real: { metric: rData.pasadias, ingresos: rData.ingresos },
-        meta: { metric: mRow?.meta_pasadias || 0, ingresos: mRow?.meta_ingresos || 0 },
-      };
-    }).sort((a, b) => b.real.metric - a.real.metric || b.real.ingresos - a.real.ingresos);
+      return [...nombres].map(nombre => {
+        const d = dataArr.find(x => x.vendedor === nombre) || { [metricField]: 0, ingresos: 0 };
+        const mRow = metasDB.find(m => m.departamento === deptKey && m.tipo === "vendedor" && m.vendedor_nombre === nombre);
+        return {
+          nombre,
+          real: { metric: d[metricField] || 0, ingresos: d.ingresos || 0 },
+          meta: { metric: mRow?.meta_pasadias || 0, ingresos: mRow?.meta_ingresos || 0 },
+        };
+      })
+      // Ocultar filas totalmente en cero (sin actividad y sin meta) para no ensuciar el ranking
+      .filter(r => r.real.metric > 0 || r.real.ingresos > 0 || r.meta.metric > 0 || r.meta.ingresos > 0)
+      .sort((a, b) => b.real.metric - a.real.metric || b.real.ingresos - a.real.ingresos);
+    };
 
-    const gruRanking = gruVendedores.map(v => {
-      const eData = eventosData.find(e => e.vendedor === v.nombre) || { grupos: 0, ingresos: 0 };
-      const mRow  = metasDB.find(m => m.departamento === "grupos" && m.tipo === "vendedor" && m.vendedor_nombre === v.nombre);
-      return {
-        nombre: v.nombre,
-        real: { metric: eData.grupos, ingresos: eData.ingresos },
-        meta: { metric: mRow?.meta_pasadias || 0, ingresos: mRow?.meta_ingresos || 0 },
-      };
-    }).sort((a, b) => b.real.metric - a.real.metric || b.real.ingresos - a.real.ingresos);
-
-    return { pasadias: pasRanking, grupos: gruRanking };
+    return {
+      pasadias: buildRanking("pasadias", reservasData, "pasadias"),
+      grupos:   buildRanking("grupos",   eventosData,  "grupos"),
+    };
   }, [vendedores, reservasData, eventosData, metasDB]);
 
   // ── Draft change ──────────────────────────────────────────────────────────────
