@@ -707,20 +707,51 @@ const btn = (bg, fg = B.navy) => ({ padding: "7px 13px", borderRadius: 8, border
 // Marcar "Libre" deshabilita los inputs y al guardar borra/skip ese día.
 function SemanaEmpleadoModal({ empleado, dias, horariosActuales, plantillas, onClose, onSaved }) {
   // Estado por día: { hora_ini, hora_fin, libre }
-  const [filas, setFilas] = useState(() =>
-    dias.map((d, i) => {
-      const h = horariosActuales[i];
-      const libre = !!h && (h.tipo === "libre" || h.tipo === "descanso");
-      return {
-        iso: d.iso,
-        existing: h || null,
-        hora_ini: h?.hora_ini ? String(h.hora_ini).slice(0, 5) : "",
-        hora_fin: h?.hora_fin ? String(h.hora_fin).slice(0, 5) : "",
-        libre,
-      };
-    })
-  );
+  // Inicializamos con los datos que ya tenemos en memoria (rápido),
+  // pero también re-consultamos la BD al montar para evitar race conditions:
+  // si el usuario acaba de guardar, cerró y vuelve a abrir, el load() padre
+  // puede no haber completado — sin este refetch veríamos datos viejos.
+  const buildFilasFrom = (list) => dias.map((d, i) => {
+    const h = list[i];
+    const libre = !!h && (h.tipo === "libre" || h.tipo === "descanso");
+    return {
+      iso: d.iso,
+      existing: h || null,
+      hora_ini: h?.hora_ini ? String(h.hora_ini).slice(0, 5) : "",
+      hora_fin: h?.hora_fin ? String(h.hora_fin).slice(0, 5) : "",
+      libre,
+    };
+  });
+  const [filas, setFilas] = useState(() => buildFilasFrom(horariosActuales));
   const [saving, setSaving] = useState(false);
+  const [refetching, setRefetching] = useState(true);
+
+  // Refetch autoritativo al montar — la BD es la verdad, no el estado del padre
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      const ini = dias[0].iso;
+      const fin = dias[dias.length - 1].iso;
+      const { data } = await supabase.from("rh_horarios")
+        .select("*")
+        .eq("empleado_id", empleado.id)
+        .gte("fecha", ini)
+        .lte("fecha", fin);
+      if (cancel) return;
+      const map = {};
+      (data || []).forEach(h => {
+        // Postgres date puede llegar como "YYYY-MM-DD" o "YYYY-MM-DDTHH:mm:ssZ"
+        // según el driver — normalizar tomando los primeros 10 chars.
+        const iso = String(h.fecha).slice(0, 10);
+        map[iso] = h;
+      });
+      const fresh = dias.map(d => map[d.iso] || null);
+      setFilas(buildFilasFrom(fresh));
+      setRefetching(false);
+    })();
+    return () => { cancel = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [empleado.id, dias[0].iso, dias[dias.length - 1].iso]);
   const set = (i, k, v) => setFilas(f => f.map((row, idx) => idx === i ? { ...row, [k]: v } : row));
 
   const aplicarLunVie = () => {
