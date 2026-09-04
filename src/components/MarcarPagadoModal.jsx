@@ -30,6 +30,11 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
 
   const esComision = pago.accion === "marcar_comision";
   const esNominaDia = pago.accion === "marcar_nomina_dia";
+  // Las embarcaciones pagan igual que comisionistas: se les aplica retención
+  // en la fuente al momento del pago. Se envían por tabla pagos_otros con
+  // pago.tipo === "embarcacion".
+  const esEmbarcacion = pago.accion === "marcar_gasto" && pago.tipo === "embarcacion";
+  const usaRetencion = esComision || esEmbarcacion;
   const montoBruto = Number(pago.monto) || 0;
   const retencionNum = Number(retencion) || 0;
   const montoNeto = Math.max(0, montoBruto - retencionNum);
@@ -45,7 +50,9 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
     pago.nominaDia?.monto_pagado ??
     0
   );
-  const totalItem = pago.accion === "marcar_comision" ? montoNeto : montoBruto;
+  // Para comisiones y embarcaciones el "total pendiente" se calcula sobre
+  // el NETO (después de retención) porque eso es lo que efectivamente se paga.
+  const totalItem = usaRetencion ? montoNeto : montoBruto;
   const saldoPendiente = Math.max(0, totalItem - yaPagado);
 
   // Monto que se está pagando ahora (editable, default = saldo pendiente).
@@ -133,8 +140,8 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
   const guardar = async () => {
     if (!referencia.trim()) { setErr("La referencia del pago es requerida."); return; }
     if (!fechaPago)         { setErr("La fecha de pago es requerida."); return; }
-    if (esComision && retencionNum < 0) { setErr("La retención no puede ser negativa."); return; }
-    if (esComision && retencionNum > montoBruto) { setErr("La retención no puede ser mayor al monto bruto."); return; }
+    if (usaRetencion && retencionNum < 0) { setErr("La retención no puede ser negativa."); return; }
+    if (usaRetencion && retencionNum > montoBruto) { setErr("La retención no puede ser mayor al monto bruto."); return; }
     if (montoPagoActual <= 0) { setErr("El monto a pagar debe ser mayor a cero."); return; }
     if (montoPagoActual > saldoPendiente + 0.01) { setErr(`El monto ($${montoPagoActual.toLocaleString("es-CO")}) excede el saldo pendiente ($${saldoPendiente.toLocaleString("es-CO")}).`); return; }
     setSaving(true);
@@ -184,7 +191,7 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
       } else if (pago.accion === "marcar_gasto") {
         const nuevoAcum = yaPagado + montoPagoActual;
         const completo = nuevoAcum >= totalItem - 0.01;
-        await supabase.from("pagos_otros").update({
+        const patchGasto = {
           monto_pagado:    nuevoAcum,
           pagado:          completo,
           pagado_at:       completo ? pagoTs : null,
@@ -194,7 +201,13 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
           metodo_pago:     metodo,
           comprobante_url: comprobante_url || pago.gasto?.comprobante_url || null,
           updated_at:      new Date().toISOString(),
-        }).eq("id", pago.gasto.id);
+        };
+        // Embarcaciones: guardar retención + neto (mismo esquema que comisiones)
+        if (esEmbarcacion) {
+          patchGasto.retencion = retencionNum;
+          patchGasto.monto_neto = montoNeto;
+        }
+        await supabase.from("pagos_otros").update(patchGasto).eq("id", pago.gasto.id);
         await logPagoParcial(pago.tipo === "embarcacion" ? "embarcacion" : "gasto", pago.gasto.id, comprobante_url);
       } else if (pago.accion === "marcar_comision") {
         const nuevoAcum = yaPagado + montoPagoActual;
@@ -343,7 +356,7 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
             </div>
           </div>
 
-          {esComision && (
+          {usaRetencion && (
             <div style={{ background: B.navy, borderRadius: 8, padding: 12, border: `1px solid ${B.navyLight}` }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 8 }}>
                 <div>
@@ -353,7 +366,7 @@ export default function MarcarPagadoModal({ pago, currentUser, onClose, onSaved 
                   </div>
                 </div>
                 <div>
-                  <label style={LS}>Retención *</label>
+                  <label style={LS}>Retención {esEmbarcacion ? "" : "*"}</label>
                   <input type="number" min="0" step="0.01" value={retencion}
                     onChange={e => setRetencion(e.target.value)} placeholder="0" style={IS} />
                 </div>
