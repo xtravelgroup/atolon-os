@@ -666,10 +666,94 @@ function DetalleModal({ reserva, huesped, habitacion, onClose, onChanged }) {
   useEffect(() => {
     if (!reserva.booking_group_id) { setGrupoRows(null); return; }
     supabase.from("hotel_estancias")
-      .select("id, codigo, total, deposito, precio_noche, habitacion_id")
+      .select("id, codigo, total, deposito, precio_noche, habitacion_id, pago_referencia, pagado_en, pasarela_usada")
       .eq("booking_group_id", reserva.booking_group_id)
       .then(({ data }) => setGrupoRows(data || []));
   }, [reserva.booking_group_id]);
+
+  // Historial de pagos: unifica pagos Zoho + Wompi + depósito registrado
+  // en la propia estancia (para reservas viejas o pagos manuales).
+  // Se busca por `reference == codigo` (que es lo que se envía al gateway
+  // como referencia externa). Para grupos, buscamos por todos los códigos.
+  const [pagos, setPagos] = useState([]);
+  const [pagosLoading, setPagosLoading] = useState(true);
+  useEffect(() => {
+    const codigos = grupoRows && grupoRows.length > 0
+      ? grupoRows.map(r => r.codigo).filter(Boolean)
+      : [reserva.codigo].filter(Boolean);
+    if (codigos.length === 0) { setPagos([]); setPagosLoading(false); return; }
+    let cancel = false;
+    (async () => {
+      setPagosLoading(true);
+      const [zohoR, wompiR] = await Promise.all([
+        supabase.from("pagos_zoho_sessions")
+          .select("payment_id, reference, amount, currency, status, last4, brand, pagado_at, created_at, tasa_aplicada, monto_cop_origen")
+          .in("reference", codigos)
+          .in("status", ["pagado", "captured", "success", "succeeded"]),
+        supabase.from("wompi_eventos_log")
+          .select("transaction_id, referencia, monto, status, evento, created_at, raw")
+          .in("referencia", codigos)
+          .in("status", ["APPROVED", "aprobado", "approved"]),
+      ]);
+      if (cancel) return;
+      const list = [];
+      // Zoho pagos
+      (zohoR.data || []).forEach(z => {
+        const cop = Number(z.monto_cop_origen || z.amount || 0);
+        list.push({
+          key: `zoho_${z.payment_id || z.reference}`,
+          fecha: z.pagado_at || z.created_at,
+          monto: cop,
+          pasarela: "Zoho Pay",
+          metodo: [z.brand, z.last4 ? `···${z.last4}` : null].filter(Boolean).join(" ") || "Tarjeta internacional",
+          referencia: z.payment_id || z.reference,
+          extra: z.currency === "USD" && z.amount
+            ? `US$ ${Number(z.amount).toLocaleString("es-CO", { maximumFractionDigits: 2 })}${z.tasa_aplicada ? ` · TRM $${Math.round(z.tasa_aplicada).toLocaleString("es-CO")}` : ""}`
+            : null,
+        });
+      });
+      // Wompi pagos
+      (wompiR.data || []).forEach(w => {
+        const raw = w.raw || {};
+        const method = raw?.data?.transaction?.payment_method?.type
+          || raw?.data?.transaction?.payment_method_type
+          || "Wompi";
+        list.push({
+          key: `wompi_${w.transaction_id || w.referencia}`,
+          fecha: w.created_at,
+          monto: Number(w.monto || 0),
+          pasarela: "Wompi",
+          metodo: method,
+          referencia: w.transaction_id || w.referencia,
+        });
+      });
+      // Depósito directo del hotel_estancias — pago manual/legacy no reflejado
+      // en pagos_zoho_sessions/wompi_eventos_log. Se muestra si hay depósito
+      // y no está ya cubierto por los pagos gateway (evita duplicado).
+      const rowsHotel = grupoRows && grupoRows.length ? grupoRows : [{ ...reserva }];
+      const totalGateway = list.reduce((s, p) => s + p.monto, 0);
+      rowsHotel.forEach(rr => {
+        const d = Number(rr.deposito || 0);
+        if (d <= 0) return;
+        // Si ya sumó al menos ese depósito por gateway, no lo repitas
+        if (totalGateway >= d - 100) return;
+        list.push({
+          key: `manual_${rr.codigo || rr.id}`,
+          fecha: rr.pagado_en || rr.updated_at || rr.created_at,
+          monto: d,
+          pasarela: rr.pasarela_usada || "Depósito",
+          metodo: rr.pago_referencia ? `Ref: ${rr.pago_referencia}` : "Registro manual",
+          referencia: rr.pago_referencia || rr.codigo,
+          esManual: true,
+        });
+      });
+      list.sort((a, b) => new Date(b.fecha || 0) - new Date(a.fecha || 0));
+      setPagos(list);
+      setPagosLoading(false);
+    })();
+    return () => { cancel = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reserva.codigo, reserva.id, grupoRows]);
 
   const est = ESTADOS.find(e => e.k === reserva.estado) || ESTADOS[0];
   const noches = diffDays(reserva.check_in_at, reserva.check_out_at);
@@ -789,6 +873,53 @@ function DetalleModal({ reserva, huesped, habitacion, onClose, onChanged }) {
         {esGrupo && (
           <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
             Habitaciones del grupo: {grupoRows.length} · Esta reserva: {fmtCOP(reserva.total)}
+          </div>
+        )}
+      </div>
+
+      {/* Historial de pagos */}
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, marginBottom: 6 }}>
+          Pagos recibidos {pagos.length > 0 && `(${pagos.length})`}
+        </div>
+        {pagosLoading ? (
+          <div style={{ padding: 10, background: B.navyLight, borderRadius: 8, fontSize: 12, color: "rgba(255,255,255,0.5)", fontStyle: "italic" }}>Cargando…</div>
+        ) : pagos.length === 0 ? (
+          <div style={{ padding: 10, background: B.navyLight, borderRadius: 8, fontSize: 12, color: "rgba(255,255,255,0.4)", fontStyle: "italic" }}>
+            Aún no hay pagos registrados
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {pagos.map(p => (
+              <div key={p.key} style={{
+                display: "grid",
+                gridTemplateColumns: "1fr auto",
+                gap: 8,
+                padding: "10px 12px",
+                background: B.navyLight,
+                borderRadius: 8,
+                borderLeft: `3px solid ${p.esManual ? B.warning : B.success}`,
+              }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <span>{p.pasarela}</span>
+                    <span style={{ fontSize: 11, fontWeight: 500, color: "rgba(255,255,255,0.6)" }}>· {p.metodo}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {p.referencia}
+                  </div>
+                  {p.extra && (
+                    <div style={{ fontSize: 10, color: B.sky, marginTop: 2 }}>{p.extra}</div>
+                  )}
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: B.success }}>{fmtCOP(p.monto)}</div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 3 }}>
+                    {p.fecha ? new Date(p.fecha).toLocaleString("es-CO", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
