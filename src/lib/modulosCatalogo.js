@@ -6,15 +6,6 @@
 
 export const GRUPOS_NAV = [
   {
-    key: "proyecto",
-    label: "Proyecto",
-    icon: "🗂",
-    color: "#8ECAE6",
-    items: [
-      { key: "plan", label: "Plan", icon: "🗓" },
-    ],
-  },
-  {
     key: "comercial",
     label: "Comercial",
     icon: "⭐",
