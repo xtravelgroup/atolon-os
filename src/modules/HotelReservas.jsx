@@ -762,6 +762,35 @@ function DetalleModal({ reserva, huesped, habitacion, onClose, onChanged }) {
   const saldo = totalGrupo - depositoGrupo;
   const esGrupo = grupoRows && grupoRows.length > 1;
 
+  // Tarifa asociada — decide si el total ya incluye impuestos o si el IVA
+  // se suma aparte. IVA hotelero Colombia: 19%.
+  const IVA_PCT = 0.19;
+  const [tarifa, setTarifa] = useState(null);
+  useEffect(() => {
+    if (!reserva.tarifa_id) { setTarifa(null); return; }
+    supabase.from("hotel_tarifas")
+      .select("nombre, incluye_impuestos")
+      .eq("id", reserva.tarifa_id)
+      .maybeSingle()
+      .then(({ data }) => setTarifa(data || null));
+  }, [reserva.tarifa_id]);
+
+  // Desglose del total:
+  //   incluye_impuestos = true (default): total mostrado ya trae IVA →
+  //     subtotal = total / 1.19, iva = total - subtotal
+  //   incluye_impuestos = false: total es la base → iva = total * 0.19,
+  //     total con impuesto = total + iva
+  const incluyeIva = tarifa?.incluye_impuestos !== false; // default true si no hay tarifa
+  const desglose = (() => {
+    if (incluyeIva) {
+      const subtotal = totalGrupo / (1 + IVA_PCT);
+      const iva = totalGrupo - subtotal;
+      return { subtotal, iva, total: totalGrupo, mode: "inc" };
+    }
+    const iva = totalGrupo * IVA_PCT;
+    return { subtotal: totalGrupo, iva, total: totalGrupo + iva, mode: "add" };
+  })();
+
   async function cambiarEstado(nuevoEstado) {
     // rank 116: no permitir transicion a in_house sin habitacion_id. Una
     // reserva "Sin asignar (asignar al check-in)" debe pasar primero por
@@ -859,16 +888,30 @@ function DetalleModal({ reserva, huesped, habitacion, onClose, onChanged }) {
             🏨×{grupoRows.length} · Folio único (multi-habitación)
           </div>
         )}
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 800 }}>
-          <span>Total{esGrupo ? " del grupo" : ""}</span>
-          <span style={{ color: B.success }}>{fmtCOP(totalGrupo)}</span>
+        {/* Desglose de impuestos — subtotal + IVA 19% + total */}
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "rgba(255,255,255,0.7)" }}>
+          <span>Subtotal (sin IVA)</span>
+          <span>{fmtCOP(desglose.subtotal)}</span>
         </div>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "rgba(255,255,255,0.7)" }}>
+          <span>IVA {Math.round(IVA_PCT * 100)}%{desglose.mode === "inc" ? " (incluido)" : ""}</span>
+          <span>{fmtCOP(desglose.iva)}</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 800, marginTop: 4, paddingTop: 6, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+          <span>Total{esGrupo ? " del grupo" : ""}</span>
+          <span style={{ color: B.success }}>{fmtCOP(desglose.total)}</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginTop: 4 }}>
           <span>Depósito{esGrupo ? " del grupo" : ""}</span><span>{fmtCOP(depositoGrupo)}</span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 700, color: saldo > 0 ? B.warning : B.success }}>
           <span>Saldo{esGrupo ? " del grupo" : ""}</span><span>{fmtCOP(saldo)}</span>
         </div>
+        {tarifa?.nombre && (
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 6 }}>
+            Tarifa: {tarifa.nombre} · {tarifa.incluye_impuestos ? "impuestos incluidos" : "impuestos aparte"}
+          </div>
+        )}
         {esGrupo && (
           <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
             Habitaciones del grupo: {grupoRows.length} · Esta reserva: {fmtCOP(reserva.total)}
