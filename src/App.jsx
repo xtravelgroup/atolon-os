@@ -332,6 +332,7 @@ const StaffView = lazy(() => import("./modules/StaffView"));
 const CamareraPortal = lazy(() => import("./modules/CamareraPortal"));
 const HousekeepingInspection = lazy(() => import("./modules/HousekeepingInspection"));
 const Briefings = lazy(() => import("./modules/Briefings"));
+const Plan = lazy(() => import("./modules/Plan"));
 const RHManuales = lazy(() => import("./modules/RHManuales"));
 const Reportes = lazy(() => import("./modules/Reportes"));
 const Presupuesto = lazy(() => import("./modules/Presupuesto"));
@@ -491,6 +492,7 @@ const MODULE_MAP = {
   contratistas_admin: <ContratistasAdmin />,
   contratistas_muelle: <ContratistasMuelle />,
   briefings: <Briefings />,
+  plan: <Plan />,
   manuales: <RHManuales />,
   reportes: <Reportes />,
   proveedores: <Proveedores />,
