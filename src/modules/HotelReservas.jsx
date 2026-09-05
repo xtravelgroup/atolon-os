@@ -697,7 +697,9 @@ function DetalleModal({ reserva, huesped, habitacion, onClose, onChanged }) {
       ]);
       if (cancel) return;
       const list = [];
-      // Zoho pagos
+      // Zoho pagos — el módulo de Hotel ve todo en pesos (no exponemos
+      // el USD original ni la TRM aplicada; eso vive en el reporte de
+      // conciliación, no en el detalle operativo).
       (zohoR.data || []).forEach(z => {
         const cop = Number(z.monto_cop_origen || z.amount || 0);
         list.push({
@@ -707,9 +709,6 @@ function DetalleModal({ reserva, huesped, habitacion, onClose, onChanged }) {
           pasarela: "Zoho Pay",
           metodo: [z.brand, z.last4 ? `···${z.last4}` : null].filter(Boolean).join(" ") || "Tarjeta internacional",
           referencia: z.payment_id || z.reference,
-          extra: z.currency === "USD" && z.amount
-            ? `US$ ${Number(z.amount).toLocaleString("es-CO", { maximumFractionDigits: 2 })}${z.tasa_aplicada ? ` · TRM $${Math.round(z.tasa_aplicada).toLocaleString("es-CO")}` : ""}`
-            : null,
         });
       });
       // Wompi pagos
@@ -908,9 +907,6 @@ function DetalleModal({ reserva, huesped, habitacion, onClose, onChanged }) {
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {p.referencia}
                   </div>
-                  {p.extra && (
-                    <div style={{ fontSize: 10, color: B.sky, marginTop: 2 }}>{p.extra}</div>
-                  )}
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontSize: 14, fontWeight: 800, color: B.success }}>{fmtCOP(p.monto)}</div>
