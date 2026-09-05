@@ -4139,12 +4139,17 @@ export default function Reservas() {
 
     // Misma regla que paxPorSalida: depende de modalidad_pago.
     //   "organizador" → el bulk es real (lo pagó el organizador) → MAX(bulk, reales)
-    //   "individual"  → cada quien paga su pasadía → solo cuentan reservas reales
+    //   "individual"  → cada quien paga su pasadía. Antes contaba SOLO las
+    //     reservas registradas, lo cual sub-conta el grupo mientras la gente
+    //     no ha ingresado su pasadía todavía (ej. BEACH DAY CATAMARÁN con 35
+    //     pax comprometidos + 1 cortesía cargada mostraba "1"). Ahora
+    //     tomamos el MAX entre lo real y el cupo del grupo (g.pax), así
+    //     el conteo refleja "cuántos hay que preparar".
     let total;
     if (g.modalidad_pago === "organizador") {
       total = Math.max(paxOrg, paxReservas + paxCortesiasOrg);
     } else {
-      total = paxReservas + paxCortesiasOrg;
+      total = Math.max(paxReservas + paxCortesiasOrg, g.pax || 0);
     }
     return total > 0 ? total : (g.pax || 0);
   };
