@@ -210,6 +210,7 @@ function ReporteFacturacionDiaria() {
   const [eventos, setEventos] = useState([]);
   const [muelle, setMuelle] = useState([]);
   const [actividades, setActividades] = useState([]);
+  const [hotel, setHotel] = useState([]);            // estancias con pagado_en = fecha
   const [aybData, setAybData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showEmitirModal, setShowEmitirModal] = useState(null); // reserva object
@@ -221,7 +222,11 @@ function ReporteFacturacionDiaria() {
       const auth = { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` };
       const base = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/loggro-sync`;
 
-      const [resR, eveR, muelleR, actR, aybRes] = await Promise.all([
+      // Hotel: pagado_en es timestamptz; usamos rango del día en Bogotá.
+      const inicioDia = `${fecha}T00:00:00-05:00`;
+      const finDia    = `${fecha}T23:59:59-05:00`;
+
+      const [resR, eveR, muelleR, actR, hotelR, aybRes] = await Promise.all([
         supabase.from("reservas")
           .select("id, nombre, fecha, total, abono, saldo, tipo, pax_a, pax_n, pax, forma_pago, canal, estado, aliado_id, email, telefono, fe_tipo_documento, fe_numero_documento, fe_razon_social, fe_nombres, fe_telefono, fe_estado, fe_numero_factura, fe_emitida_at, grupo_id")
           .eq("fecha", fecha)
@@ -243,6 +248,15 @@ function ReporteFacturacionDiaria() {
           .select("id, fecha, total, actividad, cliente, estado, forma_pago")
           .eq("fecha", fecha)
           .neq("estado", "cancelada"),
+        // Hotel: estancias cuyo pago se registró ese día. Se incluyen
+        // reservas de habitación individual y las que comparten
+        // booking_group_id (folio único de grupo de habitaciones — se
+        // consolidan en una sola línea abajo).
+        supabase.from("hotel_estancias")
+          .select("id, codigo, check_in_at, check_out_at, total, deposito, pago_referencia, pagado_en, pasarela_usada, estado, canal, booking_group_id, huesped_id, habitacion_id, grupo_id")
+          .gte("pagado_en", inicioDia)
+          .lte("pagado_en", finDia)
+          .not("estado", "in", '("cancelada","no_show")'),
         fetch(`${base}/cierre-caja-rango?from=${fecha}&to=${fecha}`, { headers: auth })
           .then(r => r.json()).catch(() => null),
       ]);
@@ -268,6 +282,26 @@ function ReporteFacturacionDiaria() {
       setEventos(eveR.data || []);
       setMuelle((muelleR.data || []).filter(m => !m.reserva_id));   // sin reserva = ingreso aparte
       setActividades(actR.data || []);
+      // Hotel: enriquecer con nombres de huésped y habitación (fetch aparte
+      // porque select con join incrementa complejidad; queda simple aquí).
+      const hotelRaw = hotelR.data || [];
+      let hotelEnriched = hotelRaw;
+      if (hotelRaw.length) {
+        const huespedIds  = [...new Set(hotelRaw.map(h => h.huesped_id).filter(Boolean))];
+        const habIds      = [...new Set(hotelRaw.map(h => h.habitacion_id).filter(Boolean))];
+        const [{ data: huespedes }, { data: habs }] = await Promise.all([
+          huespedIds.length ? supabase.from("hotel_huespedes").select("id, nombre, apellido, documento_tipo, documento, email, telefono").in("id", huespedIds) : Promise.resolve({ data: [] }),
+          habIds.length     ? supabase.from("hotel_habitaciones").select("id, numero, categoria").in("id", habIds) : Promise.resolve({ data: [] }),
+        ]);
+        const hMap = Object.fromEntries((huespedes || []).map(h => [h.id, h]));
+        const rMap = Object.fromEntries((habs      || []).map(r => [r.id, r]));
+        hotelEnriched = hotelRaw.map(e => ({
+          ...e,
+          _huesped: hMap[e.huesped_id] || null,
+          _habitacion: rMap[e.habitacion_id] || null,
+        }));
+      }
+      setHotel(hotelEnriched);
       setAybData(aybRes?.ok ? aybRes : null);
     } catch (e) {
       console.error("[ReporteFacturacionDiaria]", e);
@@ -287,7 +321,42 @@ function ReporteFacturacionDiaria() {
   const totalMuelle = muelle.reduce((s, m) => s + Number(m.total_cobrado || 0), 0);
   const totalActividades = actividades.reduce((s, a) => s + Number(a.total || 0), 0);
   const totalAyB = Number(aybData?.resumen?.total_ventas || 0);
-  const totalGeneral = totalReservasFE + totalReservasSinFE + totalEventos + totalMuelle + totalActividades + totalAyB;
+
+  // Hotel — consolidar por booking_group_id (grupo de habitaciones con folio
+  // único): varias estancias con el mismo group_id se ven como UNA sola línea
+  // en el reporte con la suma. Las estancias individuales quedan sueltas.
+  const hotelLineas = (() => {
+    const grupos = {};
+    const individuales = [];
+    hotel.forEach(e => {
+      if (e.booking_group_id) {
+        if (!grupos[e.booking_group_id]) {
+          grupos[e.booking_group_id] = {
+            key: `GRP-${e.booking_group_id}`,
+            booking_group_id: e.booking_group_id,
+            estancias: [],
+            total: 0,
+            depositoPagado: 0,
+            pasarelas: new Set(),
+            referencias: new Set(),
+            esGrupo: true,
+          };
+        }
+        const g = grupos[e.booking_group_id];
+        g.estancias.push(e);
+        g.total          += Number(e.total    || 0);
+        g.depositoPagado += Number(e.deposito || 0);
+        if (e.pasarela_usada)  g.pasarelas.add(e.pasarela_usada);
+        if (e.pago_referencia) g.referencias.add(e.pago_referencia);
+      } else {
+        individuales.push({ key: e.id, ...e, esGrupo: false });
+      }
+    });
+    return [...Object.values(grupos), ...individuales];
+  })();
+  const totalHotel = hotelLineas.reduce((s, l) => s + Number(l.depositoPagado || l.deposito || 0), 0);
+
+  const totalGeneral = totalReservasFE + totalReservasSinFE + totalEventos + totalMuelle + totalActividades + totalHotel + totalAyB;
 
   // Pendientes de emitir (FE solicitada pero no emitida)
   const pendientesEmitir = reservasConFE.filter(r => r.fe_estado !== "emitida");
@@ -480,6 +549,7 @@ function ReporteFacturacionDiaria() {
         <Kpi color={B.success} label="FE Emitidas" val={yaEmitidas.length} />
         <Kpi color={B.sand}    label="Total reservas" val={COP(totalReservasFE + totalReservasSinFE)} sub={`${reservas.length} reservas`} />
         <Kpi color="#a78bfa"   label="Total eventos" val={COP(totalEventos)} sub={`${eventos.length} eventos`} />
+        <Kpi color="#22d3ee"   label="Hotel"        val={COP(totalHotel)}    sub={`${hotel.length} habitación${hotel.length !== 1 ? "es" : ""}`} />
         <Kpi color="#fb923c"   label="A&B Restobar" val={COP(totalAyB)} sub={`${aybData?.resumen?.tickets || 0} tickets`} />
         <Kpi color={B.sky}     label="TOTAL GENERAL" val={COP(totalGeneral)} highlight />
       </div>
@@ -709,6 +779,72 @@ function ReporteFacturacionDiaria() {
                   <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{COP(Number(e.valor || 0) + Number(e.valor_extras || 0))}</td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </Seccion>
+      )}
+
+      {/* SECCIÓN 4.5: Hotel (habitaciones + grupos con folio único) */}
+      {hotelLineas.length > 0 && (
+        <Seccion titulo="🏨 Hotel — Habitaciones facturadas" color="#22d3ee" count={hotel.length} total={totalHotel}>
+          <table style={tablaStyle}>
+            <thead><tr style={trHeader}>
+              <th style={th}>Código</th>
+              <th style={th}>Huésped</th>
+              <th style={th}>Habitación</th>
+              <th style={th}>Check-in → Check-out</th>
+              <th style={th}>Canal</th>
+              <th style={th}>Pasarela</th>
+              <th style={th}>Referencia</th>
+              <th style={{ ...th, textAlign: "right" }}>Total</th>
+              <th style={{ ...th, textAlign: "right" }}>Pagado</th>
+            </tr></thead>
+            <tbody>
+              {hotelLineas.map(l => {
+                if (l.esGrupo) {
+                  // Línea consolidada del grupo (booking_group_id)
+                  const primer = l.estancias[0] || {};
+                  const rangoCI = primer.check_in_at?.slice(0, 10) || "—";
+                  const rangoCO = primer.check_out_at?.slice(0, 10) || "—";
+                  return (
+                    <tr key={l.key} style={{ ...trBody, background: "rgba(34,211,238,0.06)" }}>
+                      <td style={{ ...td, fontWeight: 700, color: "#22d3ee" }}>🏨×{l.estancias.length}<br />
+                        <span style={{ fontSize: 10, fontWeight: 400, color: "rgba(255,255,255,0.4)" }}>Folio único</span>
+                      </td>
+                      <td style={td} colSpan={2}>
+                        Grupo de habitaciones ({l.estancias.length})
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                          {l.estancias.map(e => e.codigo).join(" · ")}
+                        </div>
+                      </td>
+                      <td style={td}>{rangoCI} → {rangoCO}</td>
+                      <td style={td}>{primer.canal || "directo"}</td>
+                      <td style={td}>{[...l.pasarelas].join(", ") || "—"}</td>
+                      <td style={{ ...td, fontFamily: "monospace", fontSize: 10 }}>{[...l.referencias].join(", ") || "—"}</td>
+                      <td style={{ ...td, textAlign: "right" }}>{COP(l.total)}</td>
+                      <td style={{ ...td, textAlign: "right", fontWeight: 700, color: B.success }}>{COP(l.depositoPagado)}</td>
+                    </tr>
+                  );
+                }
+                const h = l._huesped;
+                const hab = l._habitacion;
+                return (
+                  <tr key={l.key} style={trBody}>
+                    <td style={{ ...td, fontFamily: "monospace", fontSize: 11 }}>{l.codigo || l.id?.slice(0, 8)}</td>
+                    <td style={td}>
+                      {h ? `${h.nombre || ""} ${h.apellido || ""}`.trim() : "—"}
+                      {h?.documento && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>{h.documento_tipo} {h.documento}</div>}
+                    </td>
+                    <td style={td}>{hab ? `${hab.categoria} ${hab.numero}` : "Sin asignar"}</td>
+                    <td style={td}>{l.check_in_at?.slice(0, 10) || "—"} → {l.check_out_at?.slice(0, 10) || "—"}</td>
+                    <td style={td}>{l.canal || "directo"}</td>
+                    <td style={td}>{l.pasarela_usada || "—"}</td>
+                    <td style={{ ...td, fontFamily: "monospace", fontSize: 10 }}>{l.pago_referencia || "—"}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{COP(l.total)}</td>
+                    <td style={{ ...td, textAlign: "right", fontWeight: 700, color: B.success }}>{COP(l.deposito)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </Seccion>
@@ -2087,7 +2223,7 @@ function ReporteTransacciones() {
     //  1) reservas.pagos[] (o abono directo) — reservas individuales, pasadías
     //  2) eventos.pagos[] — pagos de grupos con modalidad_pago="organizador"
     //     (viven en el evento, NO en la reserva GRP-ORG). Antes se perdían.
-    const [resR, evR] = await Promise.all([
+    const [resR, evR, hotelR] = await Promise.all([
       supabase.from("reservas")
         .select("id, fecha, fecha_pago, nombre, email, contacto, total, abono, forma_pago, canal, estado, created_at, pagos, aliado_id")
         .gt("abono", 0)
@@ -2099,9 +2235,30 @@ function ReporteTransacciones() {
       supabase.from("eventos")
         .select("id, nombre, fecha, categoria, stage, pagos, aliado_id")
         .not("pagos", "is", null),
+      // Hotel: cada estancia con pagado_en en el rango es una transacción.
+      // Los grupos de habitaciones (booking_group_id) generan una línea por
+      // habitación — cada cuarto es una fila individual porque contablemente
+      // así se factura y así se cobra el saldo del huésped.
+      supabase.from("hotel_estancias")
+        .select("id, codigo, pagado_en, pago_referencia, pasarela_usada, deposito, total, canal, estado, booking_group_id, huesped_id")
+        .not("pagado_en", "is", null)
+        .gte("pagado_en", `${fechaIni}T00:00:00-05:00`)
+        .lte("pagado_en", `${fechaFin}T23:59:59-05:00`)
+        .not("estado", "in", '("cancelada","no_show")'),
     ]);
-    const resRows = resR.data || [];
-    const evRows  = evR.data  || [];
+    const resRows   = resR.data   || [];
+    const evRows    = evR.data    || [];
+    const hotelRows = hotelR.data || [];
+
+    // Enriquecer hotel con nombres de huésped
+    let huespedMap = {};
+    if (hotelRows.length) {
+      const ids = [...new Set(hotelRows.map(h => h.huesped_id).filter(Boolean))];
+      if (ids.length) {
+        const { data } = await supabase.from("hotel_huespedes").select("id, nombre, apellido, email, telefono").in("id", ids);
+        huespedMap = Object.fromEntries((data || []).map(h => [h.id, h]));
+      }
+    }
 
     const list = [];
     resRows.forEach(r => {
@@ -2160,6 +2317,28 @@ function ReporteTransacciones() {
           estado: ev.stage,
           es_cortesia: false,
         });
+      });
+    });
+    // Pagos hotel — cada estancia con pagado_en en el rango. Los grupos de
+    // habitaciones (booking_group_id) mantienen una línea por habitación
+    // porque cada cuarto es una unidad de facturación independiente aunque
+    // el pago haya sido en un solo folio.
+    hotelRows.forEach(h => {
+      const fecha = (h.pagado_en || "").slice(0, 10);
+      if (!fecha || fecha < fechaIni || fecha > fechaFin) return;
+      const hue = huespedMap[h.huesped_id];
+      const nombre = hue ? `${hue.nombre || ""} ${hue.apellido || ""}`.trim() : "";
+      list.push({
+        fecha,
+        reserva_id: h.id, // uuid — el modal ReservaDetailModal no lo abrirá pero queda para trazabilidad
+        cliente: nombre || h.codigo || "(sin nombre)",
+        email: hue?.email || hue?.telefono || "—",
+        monto: Number(h.deposito) || Number(h.total) || 0,
+        proveedor: normProveedor(h.pasarela_usada || "Otro"),
+        canal: h.booking_group_id ? "HOTEL-GRUPO" : "HOTEL",
+        reference: h.pago_referencia || h.codigo || "—",
+        estado: h.estado,
+        es_cortesia: false,
       });
     });
     setTransacciones(list);
