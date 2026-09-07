@@ -1,0 +1,36 @@
+# CODEOWNERS — dueños del código por ruta.
+# GitHub asigna revisión automática a estos usuarios cuando alguien abre
+# un PR que toca archivos bajo el path indicado.
+#
+# Sintaxis: <patrón>   <usuario o equipo>
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-security/customizing-your-repository/about-code-owners
+
+# Por defecto, Eric revisa todo.
+*                              @erickern1
+
+# Áreas críticas de datos y dinero: revisión obligatoria de Eric.
+/src/lib/                      @erickern1
+/src/lib/trm.js                @erickern1
+/src/lib/logAccion.js          @erickern1
+/src/lib/inventario.js         @erickern1
+/src/lib/supabase.js           @erickern1
+/src/modules/Pagos.jsx         @erickern1
+/src/modules/CXC.jsx           @erickern1
+/src/modules/EstadoResultados.jsx  @erickern1
+/src/modules/Comisiones.jsx    @erickern1
+/src/components/MarcarPagadoModal.jsx  @erickern1
+
+# Toda edge function que toque pagos: siempre Eric.
+/supabase/functions/wompi-webhook/     @erickern1
+/supabase/functions/zoho-payments/     @erickern1
+/supabase/functions/stripe-webhook/    @erickern1
+/supabase/functions/create-stripe-session/  @erickern1
+/supabase/functions/meta-capi/         @erickern1
+
+# Toda migración de BD: siempre Eric.
+/supabase/migrations/          @erickern1
+
+# Configuración de repo y CI/CD.
+/.github/                      @erickern1
+/CLAUDE.md                     @erickern1
+/CONTRIBUTING.md               @erickern1
