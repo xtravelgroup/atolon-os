@@ -49,6 +49,63 @@ PRs necesitan tu aprobación (por CODEOWNERS) + que pase el `build` de CI.
 
 ---
 
+## Paso 2.5 · Ambiente separado staging vs producción (5 min)
+
+**Objetivo**: que los cambios del programador nunca lleguen directo a
+`www.atolon.co`. En su lugar caen en un ambiente de staging donde
+Eric los prueba, y solo entonces (con aprobación explícita) van a producción.
+
+**Cómo queda el flujo:**
+
+```
+Programador → rama feat/algo → PR a main
+                                  ↓ Eric mergea (staging)
+                                main = staging (preview URL fijo)
+                                  ↓ Eric prueba en staging
+                                  ↓ Eric arma PR main → production
+                                  ↓ Eric mergea (única forma de tocar prod)
+                                production = www.atolon.co
+```
+
+### 2.5.1 En Vercel
+
+1. Ir a: https://vercel.com/dashboard → proyecto `atolon-os` → **Settings → Git**.
+2. En **Production Branch**, cambiar de `main` a **`production`**.
+3. Guardar. Vercel confirmará: los merges a `main` ya no despliegan a
+   producción, solo generan previews estables.
+4. Sigue en **Settings → Environment Variables**: verifica que todas las
+   variables tengan el checkbox **Production** activo — esas se aplican
+   a la rama `production`. **Preview** cubre `main` y ramas de feature.
+
+### 2.5.2 En GitHub — proteger `production`
+
+Repite lo del Paso 2 pero para la rama `production`, con reglas **más
+estrictas**:
+
+1. Ir a: https://github.com/xtravelgroup/atolon-os/settings/branches
+2. **Add branch ruleset** → nombre: `production`.
+3. Activar:
+   - ✅ Require a pull request before merging (approvals: **1** — el tuyo)
+   - ✅ Require review from Code Owners
+   - ✅ Require status checks to pass (`build`)
+   - ✅ Require branches to be up to date before merging
+   - ✅ Restrict who can push (solo tú)
+   - ❌ Force pushes deshabilitado
+   - ❌ Deletions deshabilitado
+4. Guardar.
+
+### 2.5.3 Verificación
+
+- URL de staging: `https://atolon-os-git-main-xtravelgroup.vercel.app`
+  (Vercel te muestra el URL exacto en el dashboard tras el próximo push a main).
+- URL de producción: `https://www.atolon.co` (no cambia, sigue apuntando
+  a `production`).
+
+Después de esto, el flujo del programador es idéntico a lo que ya sabe
+(PR a `main`), pero producción queda bajo tu control absoluto.
+
+---
+
 ## Paso 3 · Configurar Vercel para previews (1 min)
 
 Vercel ya te da previews automáticos por cada rama sin configurar nada.
