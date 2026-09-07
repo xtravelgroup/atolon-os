@@ -52,7 +52,7 @@ PRs necesitan tu aprobación (por CODEOWNERS) + que pase el `build` de CI.
 ## Paso 2.5 · Ambiente separado staging vs producción (5 min)
 
 **Objetivo**: que los cambios del programador nunca lleguen directo a
-`www.atolon.co`. En su lugar caen en un ambiente de staging donde
+`www.atolon.co/login`. En su lugar caen en un ambiente de staging donde
 Eric los prueba, y solo entonces (con aprobación explícita) van a producción.
 
 **Cómo queda el flujo:**
@@ -64,7 +64,7 @@ Programador → rama feat/algo → PR a main
                                   ↓ Eric prueba en staging
                                   ↓ Eric arma PR main → production
                                   ↓ Eric mergea (única forma de tocar prod)
-                                production = www.atolon.co
+                                production = www.atolon.co/login
 ```
 
 ### 2.5.1 En Vercel
@@ -96,9 +96,9 @@ estrictas**:
 
 ### 2.5.3 Verificación
 
-- URL de staging: `https://atolon-os-git-main-xtravelgroup.vercel.app`
-  (Vercel te muestra el URL exacto en el dashboard tras el próximo push a main).
-- URL de producción: `https://www.atolon.co` (no cambia, sigue apuntando
+- URL de staging: `https://atolon-os-git-main-xtravelgroups-projects.vercel.app`
+  (formato: `<proyecto>-git-<rama>-<team-slug>.vercel.app`).
+- URL de producción: `https://www.atolon.co/login` (no cambia, sigue apuntando
   a `production`).
 
 Después de esto, el flujo del programador es idéntico a lo que ya sabe
