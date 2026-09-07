@@ -4,33 +4,48 @@
 #
 # Sintaxis: <patrón>   <usuario o equipo>
 # Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-security/customizing-your-repository/about-code-owners
+#
+# ─── Regla del equipo ─────────────────────────────────────────────────
+# Por defecto, cualquiera del equipo puede aprobar un PR. Esto evita el
+# cuello de botella de que solo Eric revise todo cuando hay 2+ devs
+# activos. Las áreas críticas (dinero, migraciones, edge functions de
+# pago) siguen siendo solo Eric — están debajo, sobrescriben la regla
+# general porque en CODEOWNERS gana la última coincidencia.
 
-# Por defecto, Eric revisa todo.
-*                              @erickern1
+*                              @erickern1 @darthneo4040 @lmario-arch
 
-# Áreas críticas de datos y dinero: revisión obligatoria de Eric.
+# ─── Áreas críticas: solo Eric ────────────────────────────────────────
+# Aquí vive el dinero, la BD y las integraciones sensibles. Cualquier
+# cambio debe pasar por él.
+
+# Librerías core del frontend
 /src/lib/                      @erickern1
 /src/lib/trm.js                @erickern1
 /src/lib/logAccion.js          @erickern1
 /src/lib/inventario.js         @erickern1
 /src/lib/supabase.js           @erickern1
+
+# Módulos financieros
 /src/modules/Pagos.jsx         @erickern1
 /src/modules/CXC.jsx           @erickern1
 /src/modules/EstadoResultados.jsx  @erickern1
 /src/modules/Comisiones.jsx    @erickern1
+/src/modules/Financiero.jsx    @erickern1
 /src/components/MarcarPagadoModal.jsx  @erickern1
+/src/components/FacturaProveedorModal.jsx  @erickern1
 
-# Toda edge function que toque pagos: siempre Eric.
-/supabase/functions/wompi-webhook/     @erickern1
-/supabase/functions/zoho-payments/     @erickern1
-/supabase/functions/stripe-webhook/    @erickern1
-/supabase/functions/create-stripe-session/  @erickern1
-/supabase/functions/meta-capi/         @erickern1
+# Edge functions de dinero
+/supabase/functions/wompi-webhook/         @erickern1
+/supabase/functions/zoho-payments/         @erickern1
+/supabase/functions/stripe-webhook/        @erickern1
+/supabase/functions/create-stripe-session/ @erickern1
+/supabase/functions/meta-capi/             @erickern1
+/supabase/functions/loggro-sync/           @erickern1
 
-# Toda migración de BD: siempre Eric.
+# Migraciones de BD — cualquier cambio de schema pasa por Eric
 /supabase/migrations/          @erickern1
 
-# Configuración de repo y CI/CD.
+# Infra del repo y reglas de proyecto
 /.github/                      @erickern1
 /CLAUDE.md                     @erickern1
 /CONTRIBUTING.md               @erickern1
