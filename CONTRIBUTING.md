@@ -38,9 +38,28 @@ también vas a necesitar el password de la BD — pídeselo a Eric.
 
 ## 2. Flujo de trabajo (obligatorio)
 
-**Nadie hace push directo a `main`.** Cero excepciones. `main` es la rama
-que Vercel despliega automáticamente a `www.atolon.co`, así que todo cambio
-pasa primero por un Pull Request.
+**Dos ambientes, dos ramas protegidas:**
+
+- **`main`** → ambiente de **staging**. URL fijo generado por Vercel al
+  que Eric prueba antes de aprobar. Todos los PRs de features apuntan aquí.
+- **`production`** → ambiente de **producción** (`www.atolon.co`). Solo se
+  actualiza cuando Eric hace un merge explícito desde `main`.
+
+**Nadie hace push directo a ninguna de las dos ramas.** Cero excepciones.
+
+**Diagrama:**
+
+```
+tu rama (feat/algo)
+    ↓  PR + preview URL efímero
+main  ← staging  (Eric prueba aquí)
+    ↓  PR de promoción (solo Eric lo mergea)
+production  ← producción (www.atolon.co)
+```
+
+Un cambio típico atraviesa dos revisiones: primero el PR del feature (que
+Eric aprueba y mergea a `main`), después el PR de promoción `main → production`
+que Eric arma cuando decide que ya está listo para clientes reales.
 
 ### 2.1 Crear tu rama
 
@@ -121,11 +140,34 @@ git push origin feat/nombre-corto-descriptivo
 
 El PR se actualiza solo y Vercel regenera el preview.
 
-### 2.6 Merge
+### 2.6 Merge a staging
 
-**Eric mergea, no tú.** Cuando aprueba, hace *"Squash and merge"* — tus
-commits se convierten en uno solo en `main`, con el título del PR. Después
-puedes borrar tu rama.
+**Eric mergea, no tú.** Cuando aprueba, hace *"Squash and merge"* de tu PR
+a `main` — tus commits se convierten en uno solo con el título del PR.
+Después puedes borrar tu rama.
+
+En cuanto se hace el merge, Vercel despliega automáticamente el URL de
+staging con tu cambio. Eric prueba ahí en vivo con datos reales.
+
+### 2.7 Promoción a producción (solo Eric)
+
+Cuando Eric decide que un lote de cambios en `main` está listo para
+clientes, arma un PR de promoción:
+
+```bash
+# En su máquina
+git checkout production
+git pull
+git merge main --ff-only
+git push origin production
+```
+
+O directamente desde GitHub, abriendo un PR de `main → production` y
+mergeando *"Merge commit"* (no squash — queremos preservar los commits
+individuales para trazabilidad de releases).
+
+Al mergear a `production`, Vercel despliega inmediatamente a `www.atolon.co`.
+**Este paso siempre lo hace Eric, nunca el programador.**
 
 ---
 
@@ -158,8 +200,10 @@ Si tu PR necesita agregar/modificar tablas o columnas:
 
 ## 4. Cosas que NUNCA debes hacer
 
-- ❌ `git push --force` a `main` (ni a ninguna rama compartida).
-- ❌ Push directo a `main` (la rama está protegida y va a rebotar).
+- ❌ `git push --force` a `main` ni a `production` (ni a ninguna rama compartida).
+- ❌ Push directo a `main` ni a `production` (ambas están protegidas y van a rebotar).
+- ❌ Abrir PR directamente a `production` — todos los PRs son a `main`.
+     Solo Eric arma el PR de promoción `main → production`.
 - ❌ Commit con `--no-verify` para saltarse hooks.
 - ❌ Correr `DELETE FROM …` o `TRUNCATE` en producción sin avisar.
 - ❌ Cambiar tokens hardcodeados de brand (`B.navy`, `B.sand`, etc.) por
