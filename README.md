@@ -4,7 +4,7 @@ Sistema operativo del beach club Atolón (Cartagena). Frontend React + Vite,
 backend Supabase (PostgreSQL + Auth + Storage + Edge Functions Deno).
 Deploy continuo en Vercel — cada push a `main` va a producción en 90s.
 
-- **Producción**: [www.atolon.co](https://www.atolon.co)
+- **Producción**: [www.atolon.co/login](https://www.atolon.co/login)
 - **Repositorio**: [github.com/xtravelgroup/atolon-os](https://github.com/xtravelgroup/atolon-os)
 
 ## Documentación

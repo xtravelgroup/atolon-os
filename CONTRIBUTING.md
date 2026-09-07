@@ -42,7 +42,7 @@ también vas a necesitar el password de la BD — pídeselo a Eric.
 
 - **`main`** → ambiente de **staging**. URL fijo generado por Vercel al
   que Eric prueba antes de aprobar. Todos los PRs de features apuntan aquí.
-- **`production`** → ambiente de **producción** (`www.atolon.co`). Solo se
+- **`production`** → ambiente de **producción** (`www.atolon.co/login`). Solo se
   actualiza cuando Eric hace un merge explícito desde `main`.
 
 **Nadie hace push directo a ninguna de las dos ramas.** Cero excepciones.
@@ -54,7 +54,7 @@ tu rama (feat/algo)
     ↓  PR + preview URL efímero
 main  ← staging  (Eric prueba aquí)
     ↓  PR de promoción (solo Eric lo mergea)
-production  ← producción (www.atolon.co)
+production  ← producción (www.atolon.co/login)
 ```
 
 Un cambio típico atraviesa dos revisiones: primero el PR del feature (que
@@ -166,7 +166,7 @@ O directamente desde GitHub, abriendo un PR de `main → production` y
 mergeando *"Merge commit"* (no squash — queremos preservar los commits
 individuales para trazabilidad de releases).
 
-Al mergear a `production`, Vercel despliega inmediatamente a `www.atolon.co`.
+Al mergear a `production`, Vercel despliega inmediatamente a `www.atolon.co/login`.
 **Este paso siempre lo hace Eric, nunca el programador.**
 
 ---
