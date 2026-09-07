@@ -96,8 +96,8 @@ estrictas**:
 
 ### 2.5.3 Verificación
 
-- URL de staging: `https://atolon-os-git-main-xtravelgroup.vercel.app`
-  (Vercel te muestra el URL exacto en el dashboard tras el próximo push a main).
+- URL de staging: `https://atolon-os-git-main-xtravelgroups-projects.vercel.app`
+  (formato: `<proyecto>-git-<rama>-<team-slug>.vercel.app`).
 - URL de producción: `https://www.atolon.co/login` (no cambia, sigue apuntando
   a `production`).
 
