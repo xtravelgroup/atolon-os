@@ -99,7 +99,13 @@ export default function Horarios() {
 
   const horariosMap = useMemo(() => {
     const m = {};
-    horarios.forEach(h => { m[`${h.empleado_id}|${h.fecha}`] = h; });
+    horarios.forEach(h => {
+      // Normalizar fecha: el driver puede devolverla como "YYYY-MM-DD" o
+      // "YYYY-MM-DDTHH:mm:ssZ". Sin este slice, la key no matchearía d.iso
+      // y el modal recibiría datos de otra fecha (bug: aparece semana pasada).
+      const fecha = String(h.fecha).slice(0, 10);
+      m[`${h.empleado_id}|${fecha}`] = h;
+    });
     return m;
   }, [horarios]);
 
@@ -181,14 +187,15 @@ export default function Horarios() {
   const asignar = async (empleado_id, fecha, plantilla_id, extra = {}) => {
     const existing = horariosMap[`${empleado_id}|${fecha}`];
     if (!plantilla_id) {
-      if (existing) await supabase.from("rh_horarios").delete().eq("id", existing.id);
+      await supabase.from("rh_horarios")
+        .delete()
+        .eq("empleado_id", empleado_id)
+        .eq("fecha", fecha);
       load();
       return;
     }
     const p = plantillasMap[plantilla_id];
     const esTurnoTrabajo = (p?.tipo || "turno") === "turno";
-    // Para turnos de trabajo: si no se pasan horas custom, dejar null (supervisor las pone al editar).
-    // Para descansos/vacaciones/ausencias: no hay horas.
     const payload = {
       empleado_id, fecha, plantilla_id,
       tipo: p?.tipo || "turno",
@@ -198,8 +205,10 @@ export default function Horarios() {
       notas: extra.notas ?? existing?.notas ?? "",
       updated_at: new Date().toISOString(),
     };
-    if (existing) await supabase.from("rh_horarios").update(payload).eq("id", existing.id);
-    else          await supabase.from("rh_horarios").insert(payload);
+    // Escribir por (empleado_id, fecha) — nunca por id — para evitar mover
+    // registros entre fechas si el existing viniera stale.
+    await supabase.from("rh_horarios")
+      .upsert(payload, { onConflict: "empleado_id,fecha" });
     load();
   };
 
@@ -771,10 +780,14 @@ function SemanaEmpleadoModal({ empleado, dias, horariosActuales, plantillas, onC
 
   const guardar = async () => {
     setSaving(true);
-    // Buscar plantilla por defecto tipo='turno' (la primera) y tipo='libre' si existe
     const plTurno = plantillas.find(p => p.tipo === "turno") || plantillas[0];
     const plLibre = plantillas.find(p => p.tipo === "libre" || p.tipo === "descanso");
 
+    // Escribimos por (empleado_id, fecha) — la fuente de verdad — y NO por
+    // row.existing.id. Si un id stale de otra semana se colara aquí, un UPDATE
+    // por id le cambiaría la fecha y arrastraría los datos de la semana pasada
+    // a la actual (bug reportado: "aparece el horario de la semana anterior
+    // después de guardar"). El UPSERT resuelve por el UNIQUE (empleado_id, fecha).
     for (const row of filas) {
       const tieneHoras = row.hora_ini && row.hora_fin;
       const queremosLibre = row.libre;
@@ -782,8 +795,10 @@ function SemanaEmpleadoModal({ empleado, dias, horariosActuales, plantillas, onC
       const queremosVacio = !queremosLibre && !tieneHoras;
 
       if (queremosVacio) {
-        // Si había algo, borrar
-        if (row.existing) await supabase.from("rh_horarios").delete().eq("id", row.existing.id);
+        await supabase.from("rh_horarios")
+          .delete()
+          .eq("empleado_id", empleado.id)
+          .eq("fecha", row.iso);
         continue;
       }
 
@@ -796,8 +811,8 @@ function SemanaEmpleadoModal({ empleado, dias, horariosActuales, plantillas, onC
         plantilla_id: queremosLibre ? (plLibre?.id || null) : (plTurno?.id || null),
         updated_at: new Date().toISOString(),
       };
-      if (row.existing) await supabase.from("rh_horarios").update(payload).eq("id", row.existing.id);
-      else              await supabase.from("rh_horarios").insert(payload);
+      await supabase.from("rh_horarios")
+        .upsert(payload, { onConflict: "empleado_id,fecha" });
     }
     setSaving(false);
     onSaved();
