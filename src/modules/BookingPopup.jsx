@@ -9,6 +9,7 @@ import { wompiCheckoutUrl } from "../lib/wompi";
 import { registrarConsentimientoReserva } from "../lib/registrarConsentimiento";
 import AtolanTrack from "../lib/AtolanTrack";
 import { gtmViewItem, gtmBeginCheckout, gtmAddPaymentInfo, gtmAbandon } from "../lib/gtm";
+import { getGa4Ids } from "../lib/ga4Ids";
 // FacturaElectronicaForm + Toggle: en mobile se renderizan dentro del step 2
 // (UX original). En desktop la captura se movió a la pantalla post-pago.
 import FacturaElectronicaForm, { FacturaElectronicaToggle, FE_EMPTY, fePayload } from "../lib/FacturaElectronicaForm.jsx";
@@ -901,12 +902,20 @@ export default function BookingPopup() {
       }
     }
 
+    // Capturamos client_id / session_id de GA4 justo antes del insert para
+    // que el edge function ga4-purchase pueda enviar el evento server-side
+    // atribuido a la misma sesión — necesario cuando la reserva confirma
+    // después por WhatsApp / Marea sin que el cliente vuelva al widget.
+    const ga4 = await getGa4Ids();
+
     if (supabase) {
       await supabase.from("reservas").insert({
         id: reservaId,
         fecha:          selDate,
         salida_id:      selSalida?.id || grupoEvt?.salida_id || "S2",
         tipo:           product.tipo,
+        ga_client_id:   ga4.client_id,
+        ga_session_id:  ga4.session_id,
         // Si el visitante llegó con link de grupo (?grupo=EVT-xxx), atribuir
         // SIEMPRE a "GRUPO" aunque el registro del evento no haya cargado
         // (evento borrado/renombrado, RLS, error de red). Así la reserva queda

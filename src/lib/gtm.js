@@ -25,6 +25,12 @@ function run(fn) {
   else queue.push(fn);
 }
 
+// Consumidores fuera de este módulo pueden preguntar cuál GA4 ID está activo
+// sin volver a leer configuracion (por ejemplo, ga4Ids.js para hacer gtag get).
+export function getGa4Id() {
+  return CFG.ga4_id || null;
+}
+
 function loadScript(src) {
   const s = document.createElement("script");
   s.async = true;
