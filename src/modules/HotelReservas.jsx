@@ -1072,6 +1072,8 @@ function LinkPagoHotelModal({ reserva, huesped, saldoDefault, totalGrupo, deposi
         totalCOP: Number(monto),
         email,
         redirectUrl: redirect,
+        // Cuenta Wompi separada para hotel: la contabilidad va aparte de pasadías.
+        merchant: "hotel",
       });
       const expira = new Date(Date.now() + horasVigencia * 3600 * 1000).toISOString();
 

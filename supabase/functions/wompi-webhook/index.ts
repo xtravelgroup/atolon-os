@@ -42,22 +42,61 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// Events secret de Wompi — usado para validar firma HMAC del webhook.
-// Primero env, luego BD. Rotable desde UI sin Supabase secrets.
-async function loadWompiEventsSecret(SB: any): Promise<string> {
-  const fromEnv = Deno.env.get("WOMPI_EVENTS_SECRET") || Deno.env.get("WOMPI_EVENTS_KEY") || "";
-  if (fromEnv) return fromEnv;
-  try {
-    const { data } = await SB.from("configuracion").select("wompi_events_secret").eq("id", "atolon").single();
-    if (data?.wompi_events_secret) return data.wompi_events_secret;
-  } catch { /* ignore */ }
-  return "";
+// Events secrets de Wompi — usados para validar firma HMAC del webhook.
+// El proyecto opera 2 comercios Wompi distintos (pasadías/default y hotel);
+// una sola URL de webhook recibe eventos de ambos, y aquí probamos los 2
+// secrets. FAIL-CLOSED: si ninguno matchea, se rechaza.
+async function loadWompiEventsSecrets(
+  SB: any,
+): Promise<{ default: string; hotel: string; defaultSource: string; hotelSource: string }> {
+  const defaultFromEnv =
+    Deno.env.get("WOMPI_EVENTS_SECRET") || Deno.env.get("WOMPI_EVENTS_KEY") || "";
+  const hotelFromEnv = Deno.env.get("WOMPI_HOTEL_EVENTS_SECRET") || "";
+
+  let defaultSecret = defaultFromEnv;
+  let hotelSecret = hotelFromEnv;
+  let defaultSource = defaultFromEnv ? "env" : "none";
+  let hotelSource = hotelFromEnv ? "env" : "none";
+
+  if (!defaultSecret || !hotelSecret) {
+    try {
+      const { data } = await SB
+        .from("configuracion")
+        .select("wompi_events_secret, wompi_hotel_events_secret")
+        .eq("id", "atolon")
+        .single();
+      if (!defaultSecret && data?.wompi_events_secret) {
+        defaultSecret = data.wompi_events_secret;
+        defaultSource = "db";
+      }
+      if (!hotelSecret && data?.wompi_hotel_events_secret) {
+        hotelSecret = data.wompi_hotel_events_secret;
+        hotelSource = "db";
+      }
+    } catch { /* ignore */ }
+  }
+
+  return { default: defaultSecret, hotel: hotelSecret, defaultSource, hotelSource };
 }
 
-// Private key de Wompi — necesaria para consultar GET /v1/transactions?reference=
-// (el endpoint de search no acepta public key). Se lee de configuracion.wompi_priv_key
-// o de env WOMPI_PRIVATE_KEY. Rotable desde la UI sin tocar Supabase secrets.
-async function loadWompiPrivKey(SB: any): Promise<string> {
+// Private keys de Wompi por comercio — para consultar GET /v1/transactions
+// (el endpoint search NO acepta public key). El caller pasa `merchant`
+// derivado del comercio que originó la transacción (se detecta por qué events
+// secret validó la firma).
+async function loadWompiPrivKey(SB: any, merchant: "default" | "hotel" = "default"): Promise<string> {
+  if (merchant === "hotel") {
+    const fromEnv = Deno.env.get("WOMPI_HOTEL_PRIVATE_KEY") || "";
+    if (fromEnv) return fromEnv;
+    try {
+      const { data } = await SB
+        .from("configuracion")
+        .select("wompi_hotel_priv_key")
+        .eq("id", "atolon")
+        .single();
+      if (data?.wompi_hotel_priv_key) return data.wompi_hotel_priv_key;
+    } catch { /* ignore */ }
+    return "";
+  }
   const fromEnv = Deno.env.get("WOMPI_PRIVATE_KEY") || "";
   if (fromEnv) return fromEnv;
   try {
@@ -84,14 +123,20 @@ function timingSafeEqualHex(a: string, b: string): boolean {
 
 // ── Validar firma del evento ────────────────────────────────────────────
 // Wompi calcula: SHA256( <prop1_value><prop2_value>...<propN_value><timestamp><events_secret> )
-// FAIL-CLOSED: si no hay secret O signature ausente, rechaza.
-async function validarFirma(payload: any, eventsSecret: string): Promise<{ ok: boolean; reason?: string }> {
-  if (!eventsSecret) return { ok: false, reason: "no_secret" };
-
+// Probamos los events_secret de ambos comercios (default y hotel). El primero
+// que matchee identifica qué comercio originó la transacción — se devuelve
+// como `merchant` para que el resto del handler elija la private key correcta.
+// FAIL-CLOSED: si ningún secret matchea, se rechaza.
+async function validarFirma(
+  payload: any,
+  secrets: { default: string; hotel: string },
+): Promise<{ ok: boolean; merchant?: "default" | "hotel"; reason?: string }> {
   const signature = payload?.signature;
   if (!signature?.checksum || !Array.isArray(signature.properties)) {
     return { ok: false, reason: "missing_signature" };
   }
+  if (!payload.timestamp) return { ok: false, reason: "missing_timestamp" };
+  if (!secrets.default && !secrets.hotel) return { ok: false, reason: "no_secret" };
 
   let concatProps: string;
   try {
@@ -105,17 +150,23 @@ async function validarFirma(payload: any, eventsSecret: string): Promise<{ ok: b
     return { ok: false, reason: `properties_parse_error: ${(e as Error).message}` };
   }
 
-  if (!payload.timestamp) return { ok: false, reason: "missing_timestamp" };
+  const expected = String(signature.checksum).toLowerCase();
+  const candidates: Array<["default" | "hotel", string]> = [];
+  if (secrets.default) candidates.push(["default", secrets.default]);
+  if (secrets.hotel)   candidates.push(["hotel",   secrets.hotel]);
 
-  const message = concatProps + String(payload.timestamp) + eventsSecret;
-  const msgBytes = new TextEncoder().encode(message);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", msgBytes);
-  const hashHex = Array.from(new Uint8Array(hashBuffer))
-    .map(b => b.toString(16).padStart(2, "0"))
-    .join("");
-  return timingSafeEqualHex(hashHex, String(signature.checksum).toLowerCase())
-    ? { ok: true }
-    : { ok: false, reason: "checksum_mismatch" };
+  for (const [merchant, secret] of candidates) {
+    const message = concatProps + String(payload.timestamp) + secret;
+    const msgBytes = new TextEncoder().encode(message);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", msgBytes);
+    const hashHex = Array.from(new Uint8Array(hashBuffer))
+      .map(b => b.toString(16).padStart(2, "0"))
+      .join("");
+    if (timingSafeEqualHex(hashHex, expected)) {
+      return { ok: true, merchant };
+    }
+  }
+  return { ok: false, reason: "checksum_mismatch" };
 }
 
 function jsonResp(obj: any, status = 200) {
@@ -151,17 +202,26 @@ serve(async (req) => {
         .from("wompi_eventos_log")
         .select("*", { count: "exact", head: true });
 
-      const privKey = await loadWompiPrivKey(SB);
-      const eventsSecret = await loadWompiEventsSecret(SB);
+      const privKeyDefault = await loadWompiPrivKey(SB, "default");
+      const privKeyHotel = await loadWompiPrivKey(SB, "hotel");
+      const secrets = await loadWompiEventsSecrets(SB);
       return jsonResp({
         ok: true,
         timestamp: new Date().toISOString(),
         webhook_url: `${Deno.env.get("SUPABASE_URL")}/functions/v1/wompi-webhook`,
         config: {
-          events_secret_configured: !!eventsSecret,
-          events_secret_source: eventsSecret ? (Deno.env.get("WOMPI_EVENTS_SECRET") || Deno.env.get("WOMPI_EVENTS_KEY") ? "env" : "db") : "none",
-          private_key_configured: !!privKey,
-          private_key_source: privKey ? (Deno.env.get("WOMPI_PRIVATE_KEY") ? "env" : "db") : "none",
+          default: {
+            events_secret_configured: !!secrets.default,
+            events_secret_source:     secrets.default ? secrets.defaultSource : "none",
+            private_key_configured:   !!privKeyDefault,
+            private_key_source:       privKeyDefault ? (Deno.env.get("WOMPI_PRIVATE_KEY") ? "env" : "db") : "none",
+          },
+          hotel: {
+            events_secret_configured: !!secrets.hotel,
+            events_secret_source:     secrets.hotel ? secrets.hotelSource : "none",
+            private_key_configured:   !!privKeyHotel,
+            private_key_source:       privKeyHotel ? (Deno.env.get("WOMPI_HOTEL_PRIVATE_KEY") ? "env" : "db") : "none",
+          },
         },
         stats: { total_eventos_recibidos: totalEventos || 0 },
         ultimos_eventos: ultimosEventos || [],
@@ -321,12 +381,17 @@ serve(async (req) => {
     }).select("id").maybeSingle();
     const logRowId = logRow?.id;
 
-    // FAIL-CLOSED: si la firma es invalida o el secret no esta configurado,
+    // FAIL-CLOSED: si la firma es invalida o ningún secret esta configurado,
     // rechazar con 401 y NO procesar. Wompi reintenta — pero es preferible
     // que reintente con firma valida que dejarse colar un evento forjado.
-    const eventsSecret = await loadWompiEventsSecret(SB);
+    // Probamos los 2 secrets (default y hotel); el que valide identifica el
+    // comercio, lo que decide qué private key usar para consultas GET
+    // /v1/transactions más adelante en el flujo.
+    const secrets = await loadWompiEventsSecrets(SB);
     const allowUnsigned = Deno.env.get("WOMPI_ALLOW_UNSIGNED") === "true";
-    const verdict = await validarFirma(payload, eventsSecret);
+    const verdict = await validarFirma(payload, secrets);
+    // Se propaga al resto del handler para elegir private key correcta.
+    const merchant: "default" | "hotel" = verdict.merchant ?? "default";
     if (!verdict.ok) {
       const msg = `Firma Wompi rechazada (${verdict.reason})`;
       console.error(msg, { ref, txId, sig: payload?.signature?.checksum?.slice(0, 12) });
