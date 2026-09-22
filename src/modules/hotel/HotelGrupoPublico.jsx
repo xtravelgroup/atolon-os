@@ -475,6 +475,8 @@ function ConfirmadaScreen({ confirmada, f, slug }) {
       totalCOP: confirmada.total,
       email: f.email,
       redirectUrl: `${window.location.origin}/reservar-grupo/${slug}?paid=${confirmada.codigo}`,
+      // Cuenta Wompi separada para hotel: link público de grupo va al comercio hotel.
+      merchant: "hotel",
     });
     window.location.href = url;
   };
