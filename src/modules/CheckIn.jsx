@@ -416,7 +416,50 @@ function EmbarcacionRentadaModal({ onClose, onSaved }) {
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+  // Rentadas históricas (activas o inactivas). Si el operador ya la había
+  // registrado un día anterior, puede seleccionarla en vez de re-tipear
+  // capitán/pilotos/cédulas. Al guardar se hace UPDATE de created_at para que
+  // aparezca en rentadasDelDia (el filtro principal muestra solo las de hoy).
+  const [historicas, setHistoricas] = useState([]);
+  const [seleccionadaId, setSeleccionadaId] = useState(""); // "" = crear nueva
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      const { data } = await supabase
+        .from("embarcaciones")
+        .select("id, nombre, tipo, capacidad, capitan, piloto_cedula, matricula, piloto_celular, piloto2_nombre, piloto2_cedula, piloto2_celular, costo_renta, notas, estado")
+        .eq("propiedad", "rentada")
+        .order("nombre");
+      if (!cancel && data) setHistoricas(data);
+    })();
+    return () => { cancel = true; };
+  }, []);
+
+  // Cuando el operador selecciona una embarcación existente, se pre-llenan
+  // los campos (editables por si cambió el piloto o la cédula).
+  const seleccionar = (id) => {
+    setSeleccionadaId(id);
+    if (!id) return;
+    const e = historicas.find(x => x.id === id);
+    if (!e) return;
+    setF({
+      nombre:          e.nombre || "",
+      capacidad:       e.capacidad != null ? String(e.capacidad) : "",
+      tipo:            e.tipo || "",
+      capitan:         e.capitan || "",
+      piloto_cedula:   e.piloto_cedula || "",
+      matricula:       e.matricula || "",
+      piloto_celular:  e.piloto_celular || "",
+      piloto2_nombre:  e.piloto2_nombre || "",
+      piloto2_cedula:  e.piloto2_cedula || "",
+      piloto2_celular: e.piloto2_celular || "",
+      costo_renta:     e.costo_renta != null ? String(e.costo_renta) : "",
+      notas:           e.notas || "",
+    });
+    setErr("");
+  };
 
   const guardar = async () => {
     setErr("");
@@ -430,8 +473,14 @@ function EmbarcacionRentadaModal({ onClose, onSaved }) {
     if (!f.piloto2_cedula.trim()) { setErr("La cédula del segundo piloto es obligatoria para zarpar."); return; }
     setSaving(true);
     try {
-      // ID corto y legible: EMB-RENT-<timestamp36>
-      const id = `EMB-RENT-${Date.now().toString(36).toUpperCase()}`;
+      // Reutilizamos el registro histórico (misma id) para no ensuciar la BD
+      // con duplicados. Al hacer UPDATE de created_at la embarcación reaparece
+      // en rentadasDelDia (el filtro principal exige que created_at === fecha).
+      const esReutilizacion = !!seleccionadaId;
+      const id = esReutilizacion
+        ? seleccionadaId
+        : `EMB-RENT-${Date.now().toString(36).toUpperCase()}`;
+      const nowIso = new Date().toISOString();
       const payload = {
         id,
         nombre: f.nombre.trim(),
@@ -448,11 +497,33 @@ function EmbarcacionRentadaModal({ onClose, onSaved }) {
         piloto2_celular: f.piloto2_celular.trim() || null,
         costo_renta: f.costo_renta ? Number(f.costo_renta) : null,
         notas: f.notas.trim() || null,
+        created_at: nowIso,
       };
-      const { data, error } = await supabase.from("embarcaciones").insert(payload).select().single();
+      let data, error;
+      if (esReutilizacion) {
+        ({ data, error } = await supabase
+          .from("embarcaciones")
+          .update(payload)
+          .eq("id", id)
+          .select()
+          .single());
+      } else {
+        ({ data, error } = await supabase
+          .from("embarcaciones")
+          .insert(payload)
+          .select()
+          .single());
+      }
       if (error) throw error;
-      // Audit log
-      try { logAccion({ modulo: "checkin", accion: "embarcacion_rentada_creada", tabla: "embarcaciones", registroId: id, datos: payload }); } catch { /* no-op */ }
+      try {
+        logAccion({
+          modulo: "checkin",
+          accion: esReutilizacion ? "embarcacion_rentada_reutilizada" : "embarcacion_rentada_creada",
+          tabla: "embarcaciones",
+          registroId: id,
+          datos: payload,
+        });
+      } catch { /* no-op */ }
       onSaved?.(data);
       onClose();
     } catch (e) {
@@ -477,6 +548,23 @@ function EmbarcacionRentadaModal({ onClose, onSaved }) {
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          {historicas.length > 0 && (
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label style={LS}>Escoger embarcación ya registrada</label>
+              <select value={seleccionadaId} onChange={e => seleccionar(e.target.value)} style={IS}>
+                <option value="">➕ Nueva embarcación (llenar abajo)</option>
+                {historicas.map(e => (
+                  <option key={e.id} value={e.id}>
+                    {e.nombre}{e.tipo ? ` · ${e.tipo}` : ""} · cap {e.capacidad || "?"}
+                    {e.capitan ? ` · ${e.capitan}` : ""}
+                  </option>
+                ))}
+              </select>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginTop: 4 }}>
+                Al escoger una ya registrada se pre-llenan los datos. Podés editarlos si cambió el piloto o la cédula; al guardar queda disponible para hoy.
+              </div>
+            </div>
+          )}
           <div style={{ gridColumn: "1 / -1" }}>
             <label style={LS}>Nombre de la embarcación *</label>
             <input value={f.nombre} onChange={e => set("nombre", e.target.value)}
